@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Mina böcker</title>
+  <meta name="theme-color" content="#7a4b2a">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Mina böcker</h1>
+    <button id="menuBtn" class="icon-btn" aria-label="Meny">⋯</button>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="reading" aria-selected="true">Läser <span class="count"></span></button>
+    <button role="tab" data-tab="shelf">Bokhylla <span class="count"></span></button>
+    <button role="tab" data-tab="wishlist">Önskelista <span class="count"></span></button>
+    <button role="tab" data-tab="read">Läst <span class="count"></span></button>
+  </nav>
+
+  <div class="filter">
+    <input id="filter" type="search" placeholder="Filtrera på titel eller författare…" aria-label="Filtrera">
+  </div>
+
+  <main id="list" class="list"></main>
+
+  <button id="addBtn" class="fab" aria-label="Lägg till bok">＋</button>
+
+  <!-- Lägg till -->
+  <dialog id="addDialog">
+    <form method="dialog" class="sheet" id="searchForm">
+      <div class="sheet-head">
+        <h2>Lägg till bok</h2>
+        <button value="cancel" class="icon-btn" aria-label="Stäng" formnovalidate>✕</button>
+      </div>
+      <div class="search-row">
+        <input id="q" type="search" placeholder="Titel, författare eller ISBN" autocomplete="off">
+        <button type="button" id="scanBtn" class="btn" hidden>📷 Skanna</button>
+      </div>
+      <video id="scanVideo" playsinline muted hidden></video>
+      <div id="results" class="results"></div>
+      <button type="button" id="manualBtn" class="link-btn">Lägg till manuellt</button>
+    </form>
+  </dialog>
+
+  <!-- Redigera -->
+  <dialog id="editDialog">
+    <form method="dialog" class="sheet" id="editForm">
+      <div class="sheet-head">
+        <h2 id="editTitle">Bok</h2>
+        <button value="cancel" class="icon-btn" aria-label="Stäng" formnovalidate>✕</button>
+      </div>
+      <div class="edit-grid">
+        <img id="editCover" class="cover big" alt="">
+        <div class="fields">
+          <label>Titel <input name="title" required></label>
+          <label>Författare <input name="authors"></label>
+          <div class="two">
+            <label>År <input name="year" inputmode="numeric"></label>
+            <label>ISBN <input name="isbn" inputmode="numeric"></label>
+          </div>
+        </div>
+      </div>
+      <fieldset class="status">
+        <legend>Läsning</legend>
+        <label><input type="radio" name="reading" value="none"> Ej påbörjad</label>
+        <label><input type="radio" name="reading" value="reading"> Läser</label>
+        <label><input type="radio" name="reading" value="read"> Läst</label>
+      </fieldset>
+      <fieldset class="status">
+        <legend>Ägande</legend>
+        <label><input type="checkbox" name="owned"> I bokhyllan</label>
+        <label><input type="checkbox" name="wanted"> På önskelistan</label>
+      </fieldset>
+      <label>Betyg
+        <div class="stars" id="stars"></div>
+      </label>
+      <label>Anteckningar <textarea name="notes" rows="3"></textarea></label>
+      <div class="actions">
+        <button type="button" id="deleteBtn" class="btn danger">Ta bort</button>
+        <span class="spacer"></span>
+        <button value="cancel" class="btn" formnovalidate>Avbryt</button>
+        <button value="save" class="btn primary" id="saveBtn">Spara</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Meny -->
+  <dialog id="menuDialog">
+    <form method="dialog" class="sheet">
+      <div class="sheet-head">
+        <h2>Data</h2>
+        <button value="cancel" class="icon-btn" aria-label="Stäng" formnovalidate>✕</button>
+      </div>
+      <p class="muted">Allt sparas lokalt i den här webbläsaren. Exportera en backup då och då, eller för att flytta till en annan enhet.</p>
+      <div class="actions col">
+        <button type="button" id="exportBtn" class="btn">⬇ Exportera (JSON)</button>
+        <button type="button" id="importBtn" class="btn">⬆ Importera (JSON)</button>
+        <input type="file" id="importFile" accept="application/json,.json" hidden>
+      </div>
+      <p class="muted" id="stats"></p>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

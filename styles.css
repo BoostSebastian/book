@@ -486,3 +486,4 @@ input.color { width: 48px; height: 34px; padding: 2px; }
 .lp:focus-visible .lp-sleeve { box-shadow: 0 0 0 3px var(--accent), 0 6px 14px rgba(0,0,0,.5); }
 .lp-marks { position: absolute; z-index: 2; right: 3px; top: 3px; display: flex; gap: 2px; }
 .lp-marks .avatar.sm { width: 16px; height: 16px; font-size: .55rem; box-shadow: 0 0 0 1.5px rgba(255,255,255,.85); }
+.src { font-size: .7rem; letter-spacing: .04em; color: var(--accent); font-weight: 600; }

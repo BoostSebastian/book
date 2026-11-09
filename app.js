@@ -464,10 +464,10 @@ function normIsbn(s) {
   return d.length === 10 || d.length === 13 ? d : null;
 }
 
-async function searchGoogle(q) {
+async function searchGoogle(q, lang = '') {
   const isbn = normIsbn(q);
   const query = isbn ? `isbn:${isbn}` : q;
-  const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=15&printType=books`);
+  const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=15&printType=books${lang ? `&langRestrict=${lang}` : ''}`);
   if (!res.ok) throw new Error('google ' + res.status);
   const data = await res.json();
   return (data.items || []).map((it) => {
@@ -507,9 +507,11 @@ async function search(q) {
   const el = $('#results');
   if (q.length < 2) { el.innerHTML = ''; return; }
   el.innerHTML = '<p class="muted">Söker…</p>';
-  let results = [];
-  try { results = await searchGoogle(q); } catch { /* prova nästa källa */ }
-  if (!results.length) { try { results = await searchOpenLibrary(q); } catch { /* ingen träff */ } }
+  // Alla källor samtidigt; en källa som inte svarar hoppas över.
+  const safe = (pr) => pr.catch(() => []);
+  const [google, googleSv, libris] = await Promise.all([safe(searchGoogle(q)), safe(searchGoogle(q, 'sv')), safe(searchLibris(q))]);
+  let results = mergeResults(q, [google, googleSv, libris]);
+  if (!results.length) results = await safe(searchOpenLibrary(q));
   if (seq !== searchSeq) return;
   lastResults = results;
   if (!results.length) {
@@ -520,7 +522,7 @@ async function search(q) {
       ${coverHtml(r)}
       <div class="info">
         <span class="title">${esc(r.title)}</span>
-        <span class="author">${esc(r.authors)}${r.year ? ' · ' + esc(r.year) : ''}${r.pages ? ` · ${r.pages} s.` : ''}</span>
+        <span class="author">${esc(r.authors)}${r.year ? ' · ' + esc(r.year) : ''}${r.pages ? ` · ${r.pages} s.` : ''}${r.source === 'libris' ? ' · <span class="src">LIBRIS</span>' : ''}</span>
       </div>
       <div class="add">
         <button type="button" class="btn" data-i="${i}" data-to="reading">Läser</button>
@@ -528,6 +530,76 @@ async function search(q) {
         <button type="button" class="btn" data-i="${i}" data-to="wishlist">Önskar</button>
       </div>
     </div>`).join('');
+}
+
+// ---------- LIBRIS (Kungliga bibliotekets katalog – i stort sett alla böcker utgivna i Sverige) ----------
+const first = (v) => (Array.isArray(v) ? v[0] : v) || '';
+const list = (v) => (Array.isArray(v) ? v : v ? [v] : []);
+// "Lindgren, Astrid, 1907-2002" → "Astrid Lindgren"
+function librisName(n) {
+  const parts = String(n).split(',').map((x) => x.trim()).filter((x) => x && !/^\d{4}-?(\d{4})?\.?$/.test(x));
+  return parts.length >= 2 ? `${parts[1]} ${parts[0]}` : parts[0] || '';
+}
+async function searchLibris(q) {
+  const isbn = normIsbn(q);
+  const query = isbn ? `NUMM:${isbn}` : q;
+  const res = await fetch(`https://libris.kb.se/xsearch?query=${encodeURIComponent(query)}&format=json&format_level=full&n=25`);
+  if (!res.ok) throw new Error('libris ' + res.status);
+  const data = await res.json();
+  return (data.xsearch?.list || [])
+    .filter((r) => !r.type || /book|bok|text/i.test(first(r.type)))
+    .map((r) => {
+      const title = String(first(r.title)).split(' / ')[0].replace(/\s+:\s+/g, ': ').trim();
+      const isbns = list(r.isbn).map((x) => normIsbn(String(x).split(' ')[0])).filter(Boolean);
+      const pages = parseInt((String(first(r.extent)).match(/(\d+)\s*(s\.|sidor|p\.)/) || [])[1], 10) || null;
+      return {
+        title,
+        authors: [...new Set(list(r.creator).map(librisName).filter(Boolean))].slice(0, 3).join(', '),
+        year: (String(first(r.date)).match(/\d{4}/) || [''])[0],
+        isbn: isbns.find((x) => x.length === 13) || isbns[0] || '',
+        pages,
+        cover: '',
+        genres: [],
+        source: 'libris',
+      };
+    })
+    .filter((r) => r.title);
+}
+
+// Slå ihop träffar från flera källor: ta bort dubbletter (ISBN eller titel+efternamn),
+// fyll i det som saknas från dubbletten och sortera efter hur väl träffen matchar sökningen.
+const fold = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+function mergeResults(q, sources) {
+  const words = fold(q).split(' ').filter((w) => w.length > 1);
+  const out = [];
+  const byKey = new Map();
+  sources.forEach((src, si) => src.forEach((r, ri) => {
+    const last = fold((r.authors || '').split(',')[0]).split(' ').pop();
+    const keys = [normIsbn(r.isbn || ''), `${fold(r.title).split(' ').slice(0, 6).join(' ')}|${last}`,
+      `${fold(String(r.title).split(':')[0])}|${last}`].filter(Boolean);
+    const hit = keys.map((k) => byKey.get(k)).find(Boolean);
+    if (hit) {
+      for (const f of ['cover', 'pages', 'year', 'isbn']) if (!hit[f] && r[f]) hit[f] = r[f];
+      if (!hit.genres?.length && r.genres?.length) hit.genres = r.genres;
+      if (r.source === 'libris' && hit.source !== 'libris') { // svenska uppgifter vinner över Googles
+        hit.title = r.title;
+        hit.authors = r.authors || hit.authors;
+        hit.source = 'libris';
+      }
+      keys.forEach((k) => byKey.set(k, hit));
+      return;
+    }
+    const item = { ...r, order: si * 100 + ri };
+    out.push(item);
+    keys.forEach((k) => byKey.set(k, item));
+  }));
+  const score = (r) => {
+    const hay = fold(`${r.title} ${r.authors}`);
+    const t = fold(r.title);
+    const found = words.filter((w) => hay.includes(w)).length / (words.length || 1);
+    return found + (t.startsWith(fold(q)) ? 0.4 : 0) + (r.cover ? 0.15 : 0) + (r.isbn ? 0.05 : 0) - r.order / 2000;
+  };
+  return out.sort((a, b) => score(b) - score(a)).slice(0, 25);
 }
 
 function findDuplicate(data) {
@@ -2011,6 +2083,13 @@ async function autoMeta() {
           if (d.ok) info = { ...info, ...((await d.json()).volumeInfo || {}) };
         }
       } catch { break; }
+      if (!info?.pageCount) { // svenska böcker: fråga LIBRIS om sidantal och år
+        try {
+          const lq = isbn || `${b.title.split(/\s*:\s*/)[0]} ${author}`;
+          const hit = (await searchLibris(lq)).find((r) => r.pages);
+          if (hit) info = { ...(info || {}), pageCount: hit.pages, publishedDate: info?.publishedDate || hit.year };
+        } catch { /* LIBRIS svarar inte */ }
+      }
       tried.add(b.id);
       saveJSON(META_TRIED_KEY, [...tried]);
       const cur = db.books[b.id];

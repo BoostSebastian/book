@@ -14,7 +14,11 @@
 <body>
   <header class="top">
     <h1>Mina böcker</h1>
-    <button id="menuBtn" class="icon-btn" aria-label="Meny">⋯</button>
+    <div class="top-actions">
+      <button id="syncBtn" class="sync-dot" aria-label="Synk" title="Synk"></button>
+      <button id="meBtn" class="avatar-btn" aria-label="Byt användare"></button>
+      <button id="menuBtn" class="icon-btn" aria-label="Meny">⋯</button>
+    </div>
   </header>
 
   <nav class="tabs" role="tablist">
@@ -23,6 +27,12 @@
     <button role="tab" data-tab="wishlist">Önskelista <span class="count"></span></button>
     <button role="tab" data-tab="read">Läst <span class="count"></span></button>
   </nav>
+
+  <div class="people" id="people" aria-label="Visa för"></div>
+  <div class="view-toggle" id="viewToggle" hidden>
+    <button data-view="spines" aria-pressed="true">📚 Hylla</button>
+    <button data-view="list" aria-pressed="false">☰ Lista</button>
+  </div>
 
   <div class="filter">
     <input id="filter" type="search" placeholder="Filtrera på titel eller författare…" aria-label="Filtrera">
@@ -37,15 +47,20 @@
     <form method="dialog" class="sheet" id="searchForm">
       <div class="sheet-head">
         <h2>Lägg till bok</h2>
-        <button value="cancel" class="icon-btn" aria-label="Stäng" formnovalidate>✕</button>
+        <button type="button" class="icon-btn" aria-label="Stäng" data-close>✕</button>
       </div>
+      <label class="inline">För <select id="addFor"></select></label>
       <div class="search-row">
         <input id="q" type="search" placeholder="Titel, författare eller ISBN" autocomplete="off">
         <button type="button" id="scanBtn" class="btn" hidden>📷 Skanna</button>
       </div>
       <video id="scanVideo" playsinline muted hidden></video>
       <div id="results" class="results"></div>
-      <button type="button" id="manualBtn" class="link-btn">Lägg till manuellt</button>
+      <div class="actions center">
+        <button type="button" id="epubImportBtn" class="btn">📖 Importera epub-filer</button>
+        <button type="button" id="manualBtn" class="link-btn">Lägg till manuellt</button>
+      </div>
+      <input type="file" id="epubFile" accept=".epub,application/epub+zip" multiple hidden>
     </form>
   </dialog>
 
@@ -54,62 +69,205 @@
     <form method="dialog" class="sheet" id="editForm">
       <div class="sheet-head">
         <h2 id="editTitle">Bok</h2>
-        <button value="cancel" class="icon-btn" aria-label="Stäng" formnovalidate>✕</button>
+        <button type="button" class="icon-btn" aria-label="Stäng" data-close>✕</button>
       </div>
       <div class="edit-grid">
-        <img id="editCover" class="cover big" alt="">
+        <button type="button" id="editCoverBtn" class="cover-btn" aria-label="Byt omslag">
+          <span id="editCover"></span><span class="cover-hint">Byt omslag</span>
+        </button>
         <div class="fields">
           <label>Titel <input name="title" required></label>
           <label>Författare <input name="authors"></label>
-          <div class="two">
+          <div class="three">
             <label>År <input name="year" inputmode="numeric"></label>
+            <label>Sidor <input name="pages" inputmode="numeric"></label>
             <label>ISBN <input name="isbn" inputmode="numeric"></label>
           </div>
         </div>
       </div>
-      <fieldset class="status">
-        <legend>Läsning</legend>
-        <label><input type="radio" name="reading" value="none"> Ej påbörjad</label>
-        <label><input type="radio" name="reading" value="reading"> Läser</label>
-        <label><input type="radio" name="reading" value="read"> Läst</label>
-      </fieldset>
-      <fieldset class="status">
-        <legend>Ägande</legend>
-        <label><input type="checkbox" name="owned"> I bokhyllan</label>
-        <label><input type="checkbox" name="wanted"> På önskelistan</label>
-      </fieldset>
-      <label>Betyg
-        <div class="stars" id="stars"></div>
-      </label>
-      <label>Anteckningar <textarea name="notes" rows="3"></textarea></label>
+      <div id="coverPicker" class="cover-picker" hidden></div>
+      <input type="file" id="coverFile" accept="image/*" hidden>
+      <label class="check"><input type="checkbox" name="owned"> Finns i bokhyllan</label>
+      <details class="spine-edit" id="spineEdit">
+        <summary>Bokrygg <span class="muted">– så här ser boken ut i hyllan</span></summary>
+        <div class="spine-edit-row">
+          <div id="spinePreview" class="spine-preview"></div>
+          <div class="fields">
+            <div class="actions wrap">
+              <button type="button" id="spinePhotoBtn" class="btn">📷 Fota bokryggen</button>
+              <button type="button" id="spineResetBtn" class="link-btn">Återställ</button>
+            </div>
+            <label class="inline">Färg <input type="color" id="spineColor" class="color"></label>
+            <div class="two">
+              <label>Höjd (cm) <input id="spineH" inputmode="decimal" placeholder="t.ex. 20"></label>
+              <label>Tjocklek (cm) <input id="spineW" inputmode="decimal" placeholder="t.ex. 2,5"></label>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <section class="member-section">
+        <div class="member-tabs" id="memberTabs"></div>
+        <fieldset class="status">
+          <legend id="statusLegend">Läsning</legend>
+          <label><input type="radio" name="status" value=""> Inget</label>
+          <label><input type="radio" name="status" value="wishlist"> Önskar</label>
+          <label><input type="radio" name="status" value="reading"> Läser</label>
+          <label><input type="radio" name="status" value="read"> Läst</label>
+        </fieldset>
+        <label id="pageRow" class="inline">Kommit till sida <input name="page" inputmode="numeric" class="short"></label>
+        <div class="stars-row"><span class="muted">Betyg</span><div class="stars" id="stars"></div></div>
+        <label>Anteckningar <textarea name="notes" rows="2"></textarea></label>
+      </section>
+
       <div class="actions">
         <button type="button" id="deleteBtn" class="btn danger">Ta bort</button>
         <span class="spacer"></span>
-        <button value="cancel" class="btn" formnovalidate>Avbryt</button>
+        <button type="button" class="btn" data-close>Avbryt</button>
         <button value="save" class="btn primary" id="saveBtn">Spara</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Visa bok -->
+  <dialog id="bookDialog">
+    <div class="sheet">
+      <div class="sheet-head">
+        <span></span>
+        <button type="button" class="icon-btn" aria-label="Stäng" data-close>✕</button>
+      </div>
+      <div class="book-view">
+        <div id="bvCover"></div>
+        <div class="bv-info">
+          <h2 id="bvTitle"></h2>
+          <p id="bvAuthor" class="bv-author"></p>
+          <p id="bvMeta" class="muted"></p>
+          <div id="bvTags" class="tags"></div>
+        </div>
+      </div>
+      <div id="bvFamily"></div>
+      <div id="bvNotes"></div>
+      <div class="actions wrap" id="bvActions"></div>
+      <input type="file" id="bvEpubFile" accept=".epub,application/epub+zip" hidden>
+    </div>
+  </dialog>
+
+  <!-- Fota bokryggen -->
+  <dialog id="spineDialog">
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2>Fota bokryggen</h2>
+        <button type="button" class="icon-btn" aria-label="Stäng" data-close>✕</button>
+      </div>
+      <p class="muted" id="spHelp">Ta en bild rakt framifrån – gärna på flera böcker i hyllan samtidigt. Dra sedan med fingret en ruta runt en bokrygg.</p>
+      <div class="actions wrap">
+        <button type="button" id="spTake" class="btn primary">📷 Ta/välj bild</button>
+        <button type="button" id="spLast" class="btn" hidden>Använd förra bilden</button>
+        <button type="button" id="spRotate" class="btn" hidden>↻ Vrid bilden</button>
+      </div>
+      <input type="file" id="spFile" accept="image/*" hidden>
+      <div class="sp-work" id="spWork" hidden>
+        <div class="sp-crop" id="spCrop"><canvas id="spCanvas"></canvas><div id="spRect" class="sp-rect"></div></div>
+        <div class="sp-result"><canvas id="spPreview"></canvas><span class="muted">Resultat</span></div>
+      </div>
+      <div class="actions">
+        <span class="spacer"></span>
+        <button type="button" class="btn" data-close>Avbryt</button>
+        <button type="button" id="spUse" class="btn primary" disabled>Använd</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Hur långt har man kommit -->
+  <dialog id="progressDialog">
+    <form method="dialog" class="sheet" id="progressForm">
+      <div class="sheet-head">
+        <h2 id="progressTitle">Hur långt?</h2>
+        <button type="button" class="icon-btn" aria-label="Stäng" data-close>✕</button>
+      </div>
+      <p class="muted" id="progressBook"></p>
+      <div class="progress-input">
+        <button type="button" class="btn" data-step="-10">−10</button>
+        <label class="page-big">Sida <input name="page" inputmode="numeric" autocomplete="off"></label>
+        <span class="of">av <input name="pages" inputmode="numeric" placeholder="?" aria-label="Antal sidor"></span>
+        <button type="button" class="btn" data-step="10">+10</button>
+      </div>
+      <input type="range" name="slider" min="0" max="100" step="1" aria-label="Sida">
+      <p class="muted" id="othersProgress"></p>
+      <div class="actions">
+        <button type="button" id="finishBtn" class="btn">✓ Utläst</button>
+        <span class="spacer"></span>
+        <button value="save" class="btn primary">Spara</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Vem är du -->
+  <dialog id="whoDialog">
+    <form method="dialog" class="sheet" id="whoForm">
+      <div class="sheet-head">
+        <h2>Vem använder appen?</h2>
+      </div>
+      <p class="muted">Välj din profil på den här enheten. Du kan byta när som helst genom att trycka på din bild uppe till höger.</p>
+      <div id="whoList" class="who-list"></div>
+      <div class="search-row">
+        <input id="newMemberName" placeholder="Nytt namn, t.ex. Matilda" autocomplete="off">
+        <button type="button" id="addMemberBtn" class="btn">Lägg till</button>
       </div>
     </form>
   </dialog>
 
   <!-- Meny -->
   <dialog id="menuDialog">
-    <form method="dialog" class="sheet">
+    <form method="dialog" class="sheet" id="menuForm">
       <div class="sheet-head">
-        <h2>Data</h2>
-        <button value="cancel" class="icon-btn" aria-label="Stäng" formnovalidate>✕</button>
+        <h2>Inställningar</h2>
+        <button type="button" class="icon-btn" aria-label="Stäng" data-close>✕</button>
       </div>
-      <p class="muted">Allt sparas lokalt i den här webbläsaren. Exportera en backup då och då, eller för att flytta till en annan enhet.</p>
-      <div class="actions col">
-        <button type="button" id="exportBtn" class="btn">⬇ Exportera (JSON)</button>
-        <button type="button" id="importBtn" class="btn">⬆ Importera (JSON)</button>
+
+      <h3>Synk mellan enheter</h3>
+      <div id="syncPanel"></div>
+
+      <h3>Familjen</h3>
+      <div id="familyList" class="family-list"></div>
+
+      <h3>Backup</h3>
+      <div class="actions">
+        <button type="button" id="exportBtn" class="btn">⬇ Exportera</button>
+        <button type="button" id="importBtn" class="btn">⬆ Importera</button>
         <input type="file" id="importFile" accept="application/json,.json" hidden>
       </div>
       <p class="muted" id="stats"></p>
     </form>
   </dialog>
 
+  <!-- Epub-läsare -->
+  <div id="reader" class="reader" hidden>
+    <div class="reader-bar">
+      <button type="button" class="icon-btn" id="rdClose" aria-label="Stäng">←</button>
+      <span id="rdTitle" class="rd-title"></span>
+      <button type="button" class="icon-btn" id="rdSmaller" aria-label="Mindre text">A−</button>
+      <button type="button" class="icon-btn" id="rdBigger" aria-label="Större text">A+</button>
+      <button type="button" class="icon-btn" id="rdTheme" aria-label="Byt färg">◐</button>
+      <button type="button" class="icon-btn" id="rdTocBtn" aria-label="Innehåll">☰</button>
+    </div>
+    <div class="reader-main">
+      <div id="rdView" class="rd-view"></div>
+      <button type="button" class="rd-zone left" id="rdPrev" aria-label="Föregående sida"></button>
+      <button type="button" class="rd-zone right" id="rdNext" aria-label="Nästa sida"></button>
+      <nav id="rdToc" class="rd-toc" hidden></nav>
+    </div>
+    <div class="reader-foot">
+      <span id="rdChapter" class="rd-chapter"></span>
+      <button type="button" id="rdFinish" class="btn" hidden>✓ Utläst</button>
+      <span id="rdPct" class="rd-pct"></span>
+    </div>
+  </div>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
+  <script src="config.js"></script>
+  <script src="vendor/supabase-2.118.0.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

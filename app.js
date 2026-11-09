@@ -178,7 +178,7 @@ function render() {
     return;
   }
   if (audioShelf) {
-    el.innerHTML = `<div class="bookcase audio-case">${list.map((b) => `<div class="slot">${spine(b, true)}</div>`).join('')}</div>`;
+    el.innerHTML = `<div class="record-shelf">${list.map(record).join('')}</div>`;
     extractSpineColors(list);
     return;
   }
@@ -962,7 +962,7 @@ $('#filter').addEventListener('input', render);
 $('#list').addEventListener('click', (e) => {
   const prog = e.target.closest('[data-progress]');
   if (prog) { openProgress(prog.dataset.progress); return; }
-  const sp = e.target.closest('.spine');
+  const sp = e.target.closest('.spine, .lp');
   if (sp) { openBook(sp.dataset.id); return; }
   const card = e.target.closest('.card');
   if (!card) return;
@@ -1293,6 +1293,17 @@ function spineSize(b) {
   w = Math.max(5, Math.min(100, Math.round(w * 2) / 2));
   return { w, h };
 }
+// Ljudbok som LP-skiva: kvadratiskt omslag med en vinylskiva som sticker ut (etiketten i omslagets färg).
+function record(b) {
+  const listeners = entriesOf(b.id).filter((e) => e.audio).map((e) => db.members[e.member_id]);
+  const color = spineColor(b);
+  return `<div class="lp-slot"><button type="button" class="lp" data-id="${esc(b.id)}" style="--sc:${esc(color)}"
+      title="${esc(b.title)}${b.authors ? ' – ' + esc(b.authors) : ''}">
+    <span class="lp-disc" aria-hidden="true"><span class="lp-label"></span></span>
+    <span class="lp-sleeve">${coverHtml(b, 'cover lp-cover')}</span>
+    ${listeners.length ? `<span class="lp-marks">${listeners.map((m) => avatar(m, 'avatar sm')).join('')}</span>` : ''}
+  </button></div>`;
+}
 function spine(b, audio = false) {
   const { w, h } = spineSize(b);
   const color = spineColor(b);
@@ -1321,7 +1332,7 @@ function extractSpineColors(list) {
       spineCache[b.id] = { src, color };
       saveJSON(SPINE_KEY, spineCache);
       if (!color) return;
-      document.querySelectorAll('.spine').forEach((el) => {
+      document.querySelectorAll('.spine, .lp').forEach((el) => {
         if (el.dataset.id !== b.id) return;
         el.style.setProperty('--sc', color);
         el.classList.toggle('light', isLight(color));

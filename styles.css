@@ -434,3 +434,55 @@ input.color { width: 48px; height: 34px; padding: 2px; }
 }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .center { text-align: center; }
+
+/* ---------- Skivhylla för ljudböcker ---------- */
+.record-shelf {
+  --lp: 80px; --row: 118px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(calc(var(--lp) + 26px), 1fr)); grid-auto-rows: var(--row);
+  padding: 0 8px; border: 10px solid var(--wood-dark); border-bottom-width: 0; border-radius: 6px 6px 0 0;
+  background:
+    linear-gradient(to bottom, rgba(0,0,0,.35), transparent 14px) 0 0 / 100% var(--row) repeat-y,
+    repeating-linear-gradient(to bottom, transparent 0 calc(var(--row) - 14px), var(--wood) calc(var(--row) - 14px) calc(var(--row) - 4px), var(--wood-dark) calc(var(--row) - 4px) var(--row)),
+    #2a2320;
+  box-shadow: inset 0 0 30px rgba(0,0,0,.45), var(--shadow);
+}
+@media (min-width: 520px) { .record-shelf { --lp: 104px; --row: 146px; } }
+@media (prefers-color-scheme: dark) { .record-shelf { background-color: #17120f; } }
+.lp-slot { display: flex; align-items: flex-end; padding: 0 0 14px 2px; }
+.lp {
+  position: relative; width: var(--lp); height: var(--lp); padding: 0; border: 0; background: none; cursor: pointer;
+  transform: perspective(500px) rotateX(4deg); transform-origin: bottom;
+}
+.lp-sleeve {
+  position: absolute; inset: 0; z-index: 1; border-radius: 2px; overflow: hidden;
+  box-shadow: 0 1px 1px rgba(0,0,0,.4), 0 6px 14px rgba(0,0,0,.5);
+}
+.lp-sleeve::after { /* glans på omslaget */
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(135deg, rgba(255,255,255,.16), transparent 40%, rgba(0,0,0,.12));
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.08);
+}
+.lp-cover { width: 100% !important; height: 100% !important; border-radius: 0 !important; object-fit: cover; display: block; }
+.lp-cover.ph .ph-t { font-size: .68rem; -webkit-line-clamp: 3; }
+.lp-cover.ph .ph-a { font-size: .55rem; }
+.lp-disc {
+  position: absolute; z-index: 0; top: 4%; left: 4%; width: 92%; height: 92%; border-radius: 50%;
+  background:
+    radial-gradient(circle, transparent 0 30%, rgba(255,255,255,.05) 30.5%, transparent 31%),
+    repeating-radial-gradient(circle, #111 0 1.5px, #1d1d1d 1.5px 3px),
+    #111;
+  box-shadow: 0 2px 6px rgba(0,0,0,.6);
+  transform: translateX(22%) rotate(0deg);
+  transition: transform .5s cubic-bezier(.2,.8,.2,1);
+}
+.lp-disc::before { /* ljusreflex i spåren */
+  content: ''; position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(from 30deg, transparent 0 20%, rgba(255,255,255,.14) 25%, transparent 30% 70%, rgba(255,255,255,.1) 75%, transparent 80%);
+}
+.lp-label { position: absolute; inset: 34%; border-radius: 50%; background: var(--sc); box-shadow: inset 0 0 0 2px rgba(0,0,0,.25); }
+.lp-label::after { content: ''; position: absolute; inset: 44%; border-radius: 50%; background: #0c0c0c; }
+.lp:hover .lp-disc, .lp:focus-visible .lp-disc { transform: translateX(42%) rotate(200deg); }
+.lp:focus-visible { outline: none; }
+.lp:focus-visible .lp-sleeve { box-shadow: 0 0 0 3px var(--accent), 0 6px 14px rgba(0,0,0,.5); }
+.lp-marks { position: absolute; z-index: 2; right: 3px; top: 3px; display: flex; gap: 2px; }
+.lp-marks .avatar.sm { width: 16px; height: 16px; font-size: .55rem; box-shadow: 0 0 0 1.5px rgba(255,255,255,.85); }

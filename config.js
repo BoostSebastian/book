@@ -3,6 +3,6 @@
 // databasen skyddas av radnivåsäkerheten i supabase/schema.sql.
 // Lämna tomt för att använda appen utan synk (bara lokalt i webbläsaren).
 window.BOOKS_CONFIG = {
-  supabaseUrl: '',
+  supabaseUrl: 'https://kzanjcdojvokoholmzis.supabase.co',
   supabaseKey: '',
 };

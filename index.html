@@ -88,8 +88,10 @@
             <label>ISBN <input name="isbn" inputmode="numeric"></label>
           </div>
           <label>Genre <input name="genres" placeholder="t.ex. Fantasy, Thriller" autocomplete="off"></label>
+          <button type="button" id="matchBtn" class="btn small-btn">🔄 Hämta uppgifter</button>
         </div>
       </div>
+      <div id="matchPanel" class="match-panel" hidden></div>
       <div id="coverPicker" class="cover-picker" hidden></div>
       <input type="file" id="coverFile" accept="image/*" hidden>
       <label class="check"><input type="checkbox" name="owned"> Finns i bokhyllan</label>
@@ -255,6 +257,10 @@
 
       <h3>Familjen</h3>
       <div id="familyList" class="family-list"></div>
+
+      <h3>Bokuppgifter</h3>
+      <p class="muted">Hämta sidantal, genre, år och omslag för alla böcker som saknar något.</p>
+      <div class="actions"><button type="button" id="metaAllBtn" class="btn">🔄 Hämta uppgifter för alla</button></div>
 
       <h3>Backup</h3>
       <div class="actions">

@@ -56,6 +56,20 @@ Har du kört `schema.sql` före november 2026: kör även [`supabase/uppdatering
 Utan `config.js` ifyllt fungerar appen precis som innan, fast bara lokalt i webbläsaren.
 Data från den första versionen flyttas automatiskt till din profil.
 
+## Egen nyckel till Google Books (rekommenderas)
+
+Utan nyckel delar appen en gemensam dygnskvot hos Google med alla andra, och den tar ofta slut.
+Då hämtas uppgifter bara från LIBRIS och Open Library. En egen nyckel är gratis (1 000 sökningar/dag):
+
+1. Gå till <https://console.cloud.google.com/> och skapa ett projekt (t.ex. "Mina böcker").
+2. **APIs & Services → Library** → sök "Books API" → **Enable**.
+3. **APIs & Services → Credentials → Create credentials → API key**.
+4. Klicka på nyckeln → **Application restrictions: Websites** → lägg till `https://boostsebastian.github.io/*`,
+   och **API restrictions: Books API**. Spara.
+5. Klistra in nyckeln som `googleBooksKey` i `config.js`.
+
+Nyckeln syns i appens källkod, men med begränsningarna ovan fungerar den bara från er sida och bara för Books API.
+
 ## Publicera gratis med GitHub Pages
 
 1. Repo → **Settings → Pages**

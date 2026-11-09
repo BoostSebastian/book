@@ -21,7 +21,7 @@ const V1_KEY = 'mina-bocker:v1';
 const TABLES = ['members', 'books', 'entries']; // i FK-ordning
 const COLUMNS = {
   members: ['id', 'name', 'color', 'updated_at'],
-  books: ['id', 'title', 'authors', 'year', 'isbn', 'cover', 'pages', 'owned', 'spine', 'genres', 'moods', 'added_at', 'updated_at'],
+  books: ['id', 'title', 'authors', 'year', 'isbn', 'cover', 'pages', 'owned', 'spine', 'genres', 'moods', 'description', 'added_at', 'updated_at'],
   entries: ['id', 'book_id', 'member_id', 'status', 'page', 'rating', 'notes', 'audio', 'started_at', 'finished_at', 'updated_at'],
 };
 const COLORS = ['#7a4b2a', '#2f6f8f', '#a2456f', '#3f7d3a', '#c0702a', '#5a4fa0', '#4f8a8b', '#8f3b2f'];
@@ -365,6 +365,7 @@ function openEdit(bookId, memberId = target(), prefill = {}) {
   f.isbn.value = d.isbn || '';
   f.pages.value = d.pages ?? '';
   f.genres.value = (d.genres || []).join(', ');
+  f.description.value = d.description || '';
   f.owned.checked = !!d.owned;
   editCover = d.cover || '';
   $('#coverPicker').hidden = true;
@@ -435,6 +436,7 @@ function saveEdit() {
     isbn: f.isbn.value.trim(),
     pages: int(f.pages.value),
     genres: f.genres.value.split(',').map((g) => g.trim()).filter(Boolean).slice(0, 5),
+    description: f.description.value.trim(),
     owned: f.owned.checked,
     cover: editCover,
     spine: cleanSpine(editSpine),
@@ -474,9 +476,7 @@ function normIsbn(s) {
 async function searchGoogle(q, lang = '') {
   const isbn = normIsbn(q);
   const query = isbn ? `isbn:${isbn}` : q;
-  const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=15&printType=books${lang ? `&langRestrict=${lang}` : ''}`);
-  if (!res.ok) throw new Error('google ' + res.status);
-  const data = await res.json();
+  const data = await gfetch(`volumes?q=${encodeURIComponent(query)}&maxResults=15&printType=books${lang ? `&langRestrict=${lang}` : ''}`);
   return (data.items || []).map((it) => {
     const v = it.volumeInfo || {};
     const ids = v.industryIdentifiers || [];
@@ -497,7 +497,7 @@ async function searchGoogle(q, lang = '') {
 async function searchOpenLibrary(q) {
   const isbn = normIsbn(q);
   const param = isbn ? `isbn=${isbn}` : `q=${encodeURIComponent(q)}`;
-  const res = await fetch(`https://openlibrary.org/search.json?${param}&limit=15&fields=title,author_name,first_publish_year,isbn,cover_i,number_of_pages_median`);
+  const res = await fetch(`https://openlibrary.org/search.json?${param}&limit=15&fields=key,title,author_name,first_publish_year,isbn,cover_i,number_of_pages_median,subject`);
   if (!res.ok) throw new Error('openlibrary ' + res.status);
   const data = await res.json();
   return (data.docs || []).map((d) => ({
@@ -507,6 +507,9 @@ async function searchOpenLibrary(q) {
     isbn: isbn || d.isbn?.find((i) => i.length === 13) || d.isbn?.[0] || '',
     pages: d.number_of_pages_median || null,
     cover: d.cover_i ? `https://covers.openlibrary.org/b/id/${d.cover_i}-M.jpg` : '',
+    genres: olGenres(d.subject),
+    olWork: d.key || '',
+    source: 'openlibrary',
   }));
 }
 
@@ -517,16 +520,16 @@ async function search(q) {
   el.innerHTML = '<p class="muted">Söker…</p>';
   // Alla källor samtidigt; en källa som inte svarar hoppas över.
   const safe = (pr) => pr.catch(() => []);
-  const [google, googleSv, libris] = await Promise.all([safe(searchGoogle(q)), safe(searchGoogle(q, 'sv')), safe(searchLibris(q))]);
-  let results = mergeResults(q, [google, googleSv, libris]);
-  if (!results.length) results = await safe(searchOpenLibrary(q));
+  const [google, googleSv, libris, ol] = await Promise.all([safe(searchGoogle(q)), safe(searchGoogle(q, 'sv')), safe(searchLibris(q)), safe(searchOpenLibrary(q))]);
+  const results = mergeResults(q, [google, googleSv, libris, ol]);
   if (seq !== searchSeq) return;
   lastResults = results;
   if (!results.length) {
     el.innerHTML = '<p class="muted">Inga träffar. Du kan lägga till boken manuellt.</p>';
     return;
   }
-  el.innerHTML = results.map((r, i) => `<div class="result">
+  const note = googleOk() ? '' : '<p class="muted small">Google Books svarar inte just nu (gemensam dygnskvot slut) – visar träffar från LIBRIS och Open Library.</p>';
+  el.innerHTML = note + results.map((r, i) => `<div class="result">
       ${coverHtml(r)}
       <div class="info">
         <span class="title">${esc(r.title)}</span>
@@ -587,7 +590,7 @@ function mergeResults(q, sources) {
       `${fold(String(r.title).split(':')[0])}|${last}`].filter(Boolean);
     const hit = keys.map((k) => byKey.get(k)).find(Boolean);
     if (hit) {
-      for (const f of ['cover', 'pages', 'year', 'isbn']) if (!hit[f] && r[f]) hit[f] = r[f];
+      for (const f of ['cover', 'pages', 'year', 'isbn', 'gid', 'olWork', 'description']) if (!hit[f] && r[f]) hit[f] = r[f];
       if (!hit.genres?.length && r.genres?.length) hit.genres = r.genres;
       if (r.source === 'libris' && hit.source !== 'libris') { // svenska uppgifter vinner över Googles
         hit.title = r.title;
@@ -779,7 +782,7 @@ async function sync() {
   } catch (err) {
     console.warn('Synk misslyckades', err);
     syncError = err?.message || String(err);
-    if (/column|schema cache|PGRST204/i.test(syncError)) syncError = 'Databasen behöver uppdateras – kör supabase/uppdatering-2.sql i Supabase (SQL Editor)';
+    if (/column|schema cache|PGRST204/i.test(syncError)) syncError = 'Databasen behöver uppdateras – kör supabase/uppdatering-3.sql i Supabase (SQL Editor)';
     setSyncState(navigator.onLine ? 'error' : 'offline');
   } finally {
     syncing = false;
@@ -1276,8 +1279,7 @@ async function coverCandidates(b) {
   if (b.title) queries.push(`intitle:${b.title}${author ? ` inauthor:${author}` : ''}`);
   for (const q of queries) {
     try {
-      const r = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=12`);
-      if (r.ok) for (const it of (await r.json()).items || []) {
+      for (const it of (await gfetch(`volumes?q=${encodeURIComponent(q)}&maxResults=12`)).items || []) {
         const l = it.volumeInfo?.imageLinks;
         add(googleImg(l?.thumbnail || l?.smallThumbnail));
       }
@@ -1461,7 +1463,11 @@ function openBook(id) {
   const tags = [];
   if (b.owned) tags.push('I bokhyllan');
   if (localEpubs.has(id)) tags.push('E-bok på den här enheten');
-  $('#bvTags').innerHTML = tags.map((t) => `<span class="tag">${t}</span>`).join('');
+  $('#bvTags').innerHTML = tags.map((t) => `<span class="tag">${t}</span>`).join('') +
+    (b.genres || []).map((g) => `<span class="tag genre">${esc(g)}</span>`).join('');
+  $('#bvDesc').innerHTML = b.description
+    ? `<h3>Baksidan</h3><p class="desc clamp">${esc(b.description)}</p>${b.description.length > 320 ? '<button type="button" class="link-btn" data-more>Visa mer</button>' : ''}`
+    : '';
   const es = entriesOf(id);
   $('#bvFamily').innerHTML = es.length ? `<h3>Familjen</h3>${whoRows(es, b)}` : '';
   $('#bvNotes').innerHTML = es.filter((e) => e.notes).map((e) =>
@@ -1762,6 +1768,8 @@ $('#viewToggle').addEventListener('click', (e) => {
 $('#bookDialog').addEventListener('click', async (e) => {
   const prog = e.target.closest('[data-progress]');
   if (prog) { openProgress(prog.dataset.progress); return; }
+  const more = e.target.closest('[data-more]');
+  if (more) { const d = $('#bvDesc .desc'); d.classList.toggle('clamp'); more.textContent = d.classList.contains('clamp') ? 'Visa mer' : 'Visa mindre'; return; }
   const btn = e.target.closest('[data-bv]');
   if (!btn) return;
   const id = viewBookId;
@@ -2077,50 +2085,153 @@ const MOODS_SV = {
 };
 const moodSv = (m) => MOODS_SV[String(m).toLowerCase()] || cap(String(m));
 
-// Fyll i sidantal, genre och år i bakgrunden för böcker som saknar det.
-const META_TRIED_KEY = 'mina-bocker:meta-tried';
+// ---------- Bokuppgifter från flera källor ----------
+// Google Books utan egen nyckel delar en gemensam dygnskvot med alla andra, som ofta tar slut (svar 429).
+// Därför: egen nyckel i config.js om den finns, paus mot Google när kvoten är slut,
+// och LIBRIS + Open Library som fullvärdiga källor.
+let googleBlockedUntil = 0;
+let googleQuotaNoted = false;
+async function gfetch(path) {
+  if (Date.now() < googleBlockedUntil) throw new Error('google-kvot');
+  const u = new URL('https://www.googleapis.com/books/v1/' + path);
+  const key = (window.BOOKS_CONFIG || {}).googleBooksKey;
+  if (key) u.searchParams.set('key', key);
+  const r = await fetch(u);
+  if (r.status === 429 || r.status === 403) {
+    googleBlockedUntil = Date.now() + 15 * 60 * 1000;
+    if (!googleQuotaNoted) {
+      googleQuotaNoted = true;
+      console.warn('Google Books: kvoten är slut', r.status);
+    }
+    throw new Error('google-kvot');
+  }
+  if (!r.ok) throw new Error('google ' + r.status);
+  return r.json();
+}
+const googleOk = () => Date.now() >= googleBlockedUntil;
+
+async function googleDetail(gid) {
+  try { return (await gfetch(`volumes/${encodeURIComponent(gid)}`)).volumeInfo || null; } catch { return null; }
+}
+
+// Text från Google innehåller HTML. DOMParser kör inga skript och laddar inga bilder.
+function cleanText(html) {
+  if (!html) return '';
+  const src = String(html).replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>\s*/gi, '\n\n');
+  const text = new DOMParser().parseFromString(src, 'text/html').body.textContent || '';
+  return text
+    .split(/\n-{4,}/)[0]                       // Open Library: källhänvisningar efter en linje
+    .replace(/\(\[[^\]]*\]\[\d+\]\)/g, '')     // Open Library: ([källa][1])
+    .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim().slice(0, 5000);
+}
+
+async function olByIsbn(isbn) {
+  try {
+    const r = await fetch(`https://openlibrary.org/isbn/${isbn}.json`);
+    return r.ok ? await r.json() : null;
+  } catch { return null; }
+}
+async function olDescription(workKey) {
+  try {
+    const r = await fetch(`https://openlibrary.org${workKey}.json`);
+    if (!r.ok) return '';
+    const d = (await r.json()).description;
+    return cleanText(typeof d === 'string' ? d : d?.value);
+  } catch { return ''; }
+}
+// Open Library-ämnen ("Science fiction", "Fantasy fiction", …) → våra genrer
+function olGenres(subjects) {
+  const out = [];
+  for (const s of (subjects || []).slice(0, 20)) {
+    const low = String(s).toLowerCase();
+    for (const [k, v] of Object.entries(GENRE_SV)) {
+      if (!v || k === 'fiction' || k === 'general' || k === 'literary') continue;
+      if ((low === k || low.startsWith(k + ' ') || low.endsWith(' ' + k)) && !out.includes(v)) out.push(v);
+    }
+  }
+  return out.slice(0, 3);
+}
+const similar = (a, b) => { const x = fold(a), y = fold(b); return !!x && !!y && (x.includes(y) || y.includes(x)); };
+
+function fillMissing(m, x) {
+  for (const [k, v] of Object.entries(x || {})) {
+    const empty = m[k] == null || m[k] === '' || (Array.isArray(m[k]) && !m[k].length);
+    const has = v != null && v !== '' && !(Array.isArray(v) && !v.length);
+    if (empty && has) m[k] = v;
+  }
+}
+
+// Samla uppgifter om en bok: Google (om kvoten räcker) → LIBRIS → Open Library.
+async function fetchMeta(seed) {
+  const m = { ...seed, genres: seed.genres || [] };
+  const isbn = normIsbn(m.isbn || '');
+  const author = (m.authors || '').split(',')[0].trim();
+  const short = (m.title || '').split(/\s*:\s*/)[0].trim();
+  const need = () => !m.pages || !m.genres.length || !m.description || !m.year;
+
+  if (need() && googleOk()) {
+    try {
+      let gid = m.gid;
+      if (!gid) {
+        for (const q of [isbn && `isbn:${isbn}`, short && `intitle:${short}${author ? ` inauthor:${author}` : ''}`].filter(Boolean)) {
+          const items = (await gfetch(`volumes?q=${encodeURIComponent(q)}&maxResults=5`)).items || [];
+          const hit = items.find((it) => it.volumeInfo?.pageCount && (isbn || similar(it.volumeInfo.title, short))) || (isbn ? items[0] : null);
+          if (hit) { gid = hit.id; break; }
+        }
+      }
+      const v = gid ? await googleDetail(gid) : null;
+      if (v) {
+        const ids = v.industryIdentifiers || [];
+        fillMissing(m, {
+          pages: v.pageCount || v.printedPageCount, genres: genresFrom(v.categories), year: (v.publishedDate || '').slice(0, 4),
+          description: cleanText(v.description), cover: googleImg(v.imageLinks?.thumbnail || v.imageLinks?.smallThumbnail),
+          isbn: ids.find((i) => i.type === 'ISBN_13')?.identifier || '',
+        });
+      }
+    } catch { /* kvoten slut eller ingen träff – nästa källa */ }
+  }
+  if (!m.pages || !m.year) {
+    try {
+      const hit = (await searchLibris(isbn || `${short} ${author}`)).find((r) => (isbn || similar(r.title, short)) && (r.pages || r.year));
+      if (hit) fillMissing(m, { pages: hit.pages, year: hit.year, isbn: hit.isbn, description: hit.description });
+    } catch { /* LIBRIS svarar inte */ }
+  }
+  if (need()) {
+    let work = m.olWork;
+    if (isbn) {
+      const ed = await olByIsbn(isbn);
+      if (ed) { fillMissing(m, { pages: ed.number_of_pages }); work = work || ed.works?.[0]?.key; }
+    }
+    if (!m.pages || !m.genres.length || !work) {
+      try {
+        const d = (await searchOpenLibrary(`${short} ${author}`.trim())).find((r) => similar(r.title, short));
+        if (d) { fillMissing(m, { pages: d.pages, genres: d.genres, year: d.year, cover: d.cover }); work = work || d.olWork; }
+      } catch { /* Open Library svarar inte */ }
+    }
+    if (!m.description && work) fillMissing(m, { description: await olDescription(work) });
+  }
+  return m;
+}
+
+// Fyll i sidantal, genre, år och baksidestext i bakgrunden för böcker som saknar det.
+const META_TRIED_KEY = 'mina-bocker:meta-tried-2';
 let autoMetaRunning = false;
 async function autoMeta() {
   if (autoMetaRunning || !navigator.onLine) return;
   autoMetaRunning = true;
   try {
     const tried = new Set(loadJSON(META_TRIED_KEY, []));
-    const todo = Object.values(db.books).filter((b) => (!b.pages || !b.genres?.length) && !tried.has(b.id)).slice(0, 12);
+    const todo = Object.values(db.books).filter((b) => (!b.pages || !b.genres?.length || !b.description) && !tried.has(b.id)).slice(0, 12);
     for (const b of todo) {
-      const isbn = normIsbn(b.isbn || '');
-      const author = (b.authors || '').split(',')[0].trim();
-      // Först ISBN, sedan titel + författare om ISBN inte gav något.
-      const queries = [isbn && `isbn:${isbn}`, `intitle:${b.title.split(/\s*:\s*/)[0]}${author ? ` inauthor:${author}` : ''}`].filter(Boolean);
-      let info = null;
-      try {
-        let items = [];
-        for (const q of queries) {
-          const r = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=5`);
-          if (!r.ok) throw new Error('google ' + r.status);
-          items = (await r.json()).items || [];
-          if (items.length) break;
-        }
-        const hit = items.find((it) => it.volumeInfo?.pageCount) || items[0];
-        if (hit) {
-          info = hit.volumeInfo || {};
-          const d = await fetch(`https://www.googleapis.com/books/v1/volumes/${hit.id}`);
-          if (d.ok) info = { ...info, ...((await d.json()).volumeInfo || {}) };
-        }
-      } catch { break; }
-      if (!info?.pageCount) { // svenska böcker: fråga LIBRIS om sidantal och år
-        try {
-          const lq = isbn || `${b.title.split(/\s*:\s*/)[0]} ${author}`;
-          const hit = (await searchLibris(lq)).find((r) => r.pages);
-          if (hit) info = { ...(info || {}), pageCount: hit.pages, publishedDate: info?.publishedDate || hit.year };
-        } catch { /* LIBRIS svarar inte */ }
-      }
+      if (!navigator.onLine) break;
+      const m = await fetchMeta(b);
       tried.add(b.id);
       saveJSON(META_TRIED_KEY, [...tried]);
       const cur = db.books[b.id];
-      if (!cur || !info) continue;
-      const genres = cur.genres?.length ? cur.genres : genresFrom(info.categories);
-      const upd = { ...cur, pages: cur.pages || info.pageCount || null, genres, year: cur.year || (info.publishedDate || '').slice(0, 4) };
-      if (upd.pages !== cur.pages || upd.year !== cur.year || JSON.stringify(upd.genres) !== JSON.stringify(cur.genres || [])) {
+      if (!cur) continue;
+      const upd = { ...cur };
+      fillMissing(upd, { pages: m.pages, genres: m.genres, year: m.year, description: m.description, isbn: m.isbn });
+      if (['pages', 'genres', 'year', 'description', 'isbn'].some((k) => JSON.stringify(upd[k] ?? null) !== JSON.stringify(cur[k] ?? null))) {
         put('books', upd);
         commit();
       }
@@ -2290,12 +2401,6 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#sta
 // ---------- Hämta uppgifter (matcha boken mot Google Books och LIBRIS) ----------
 let matchResults = [];
 
-async function googleDetail(gid) {
-  try {
-    const r = await fetch(`https://www.googleapis.com/books/v1/volumes/${encodeURIComponent(gid)}`);
-    return r.ok ? (await r.json()).volumeInfo || null : null;
-  } catch { return null; }
-}
 
 async function openMatch() {
   const el = $('#matchPanel');
@@ -2305,12 +2410,12 @@ async function openMatch() {
   const isbn = normIsbn(f.isbn.value);
   if (!title && !isbn) { toast('Skriv en titel först'); return; }
   el.hidden = false;
-  el.innerHTML = '<p class="muted">Söker i Google Books och LIBRIS…</p>';
+  el.innerHTML = '<p class="muted">Söker i Google Books, LIBRIS och Open Library…</p>';
   el.scrollIntoView({ block: 'nearest' });
   const q = `${title.split(/\s*:\s*/)[0]} ${author}`.trim();
   const safe = (pr) => pr.catch(() => []);
-  const searches = [safe(searchGoogle(q)), safe(searchGoogle(q, 'sv')), safe(searchLibris(q))];
-  if (isbn) searches.unshift(safe(searchGoogle(isbn)), safe(searchLibris(isbn)));
+  const searches = [safe(searchGoogle(q)), safe(searchGoogle(q, 'sv')), safe(searchLibris(q)), safe(searchOpenLibrary(q))];
+  if (isbn) searches.unshift(safe(searchGoogle(isbn)), safe(searchLibris(isbn)), safe(searchOpenLibrary(isbn)));
   matchResults = mergeResults(q, await Promise.all(searches)).slice(0, 8);
   if (el.hidden) return;
   if (!matchResults.length) {
@@ -2330,29 +2435,33 @@ async function openMatch() {
 async function applyMatch(r) {
   const el = $('#matchPanel');
   el.innerHTML = '<p class="muted">Hämtar uppgifter…</p>';
-  // Hämta fullständiga uppgifter: Googles detaljsida har exakta genrer; LIBRIS-träffar kompletteras via ISBN hos Google.
-  let info = r.gid ? await googleDetail(r.gid) : null;
-  if (!info && r.isbn) {
-    const g = await searchGoogle(r.isbn).catch(() => []);
-    if (g[0]?.gid) info = await googleDetail(g[0].gid);
-    else if (g[0]) info = { pageCount: g[0].pages, imageLinks: g[0].cover ? { thumbnail: g[0].cover } : null };
-  }
+  // Exakta genrer och baksidestext finns på källornas detaljsidor, så sökträffens genrer får vänta.
+  const m = await fetchMeta({ ...r, genres: [], description: '' });
+  if (!m.genres.length) m.genres = r.genres || [];
   const f = $('#editForm').elements;
-  const pages = r.pages || info?.pageCount || null;
-  const genres = r.genres?.length > (genresFrom(info?.categories).length) ? r.genres : genresFrom(info?.categories);
-  const cover = r.cover || googleImg(info?.imageLinks?.thumbnail || info?.imageLinks?.smallThumbnail);
   const changed = [];
-  if (pages && int(f.pages.value) !== pages) { f.pages.value = pages; changed.push('sidor'); }
-  if (genres.length && f.genres.value.trim() !== genres.join(', ')) { f.genres.value = genres.join(', '); changed.push('genre'); }
-  const year = r.year || (info?.publishedDate || '').slice(0, 4);
-  if (year && f.year.value.trim() !== year) { f.year.value = year; changed.push('år'); }
-  if (r.isbn && normIsbn(f.isbn.value) !== normIsbn(r.isbn)) { f.isbn.value = r.isbn; changed.push('ISBN'); }
-  if (!f.authors.value.trim() && r.authors) { f.authors.value = r.authors; changed.push('författare'); }
-  if (cover && !editCover) { editCover = cover; changed.push('omslag'); }
+  const set = (field, val, label, allowed = true) => {
+    if (val && allowed && String(f[field].value).trim() !== String(val)) { f[field].value = val; changed.push(label); }
+  };
+  set('pages', m.pages, 'sidor');
+  if (m.genres.length) set('genres', m.genres.join(', '), 'genre');
+  set('year', m.year, 'år');
+  set('isbn', m.isbn, 'ISBN');
+  set('authors', m.authors, 'författare', !f.authors.value.trim());
+  set('description', m.description, 'baksidestext', !f.description.value.trim());
+  if (m.cover && !editCover) { editCover = m.cover; changed.push('omslag'); }
   renderEditCover();
   if ($('#spineEdit').open) renderSpinePreview();
   el.hidden = true;
-  toast(changed.length ? `Ifyllt: ${changed.join(', ')} – tryck Spara` : 'Uppgifterna stämde redan');
+  // Spara direkt på en befintlig bok, så att uppgifterna inte går förlorade om man stänger.
+  const cur = db.books[editBookId];
+  if (cur && changed.length) {
+    put('books', { ...cur, pages: int(f.pages.value), year: f.year.value.trim(), isbn: f.isbn.value.trim(), authors: f.authors.value.trim(),
+      genres: f.genres.value.split(',').map((g) => g.trim()).filter(Boolean).slice(0, 5), description: f.description.value.trim(), cover: editCover });
+    commit();
+  }
+  const quota = !googleOk() ? ' (Google Books är tillfälligt otillgängligt)' : '';
+  toast(changed.length ? `Sparat: ${changed.join(', ')}` : `Hittade inga fler uppgifter för den här utgåvan${quota}`);
 }
 
 $('#matchBtn').addEventListener('click', () => { if ($('#matchPanel').hidden) openMatch(); else $('#matchPanel').hidden = true; });
@@ -2364,7 +2473,7 @@ $('#matchPanel').addEventListener('click', (e) => {
 
 // Alla böcker: kör bakgrundshämtningen igen för allt som saknar sidor, genre eller omslag.
 $('#metaAllBtn').addEventListener('click', async () => {
-  const missing = Object.values(db.books).filter((b) => !b.pages || !b.genres?.length || !b.cover);
+  const missing = Object.values(db.books).filter((b) => !b.pages || !b.genres?.length || !b.cover || !b.description);
   if (!missing.length) { toast('Alla böcker har redan sidor, genre och omslag'); return; }
   const ids = new Set(missing.map((b) => b.id));
   saveJSON(META_TRIED_KEY, loadJSON(META_TRIED_KEY, []).filter((id) => !ids.has(id)));

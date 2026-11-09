@@ -350,7 +350,7 @@ body.reading-mode { overflow: hidden; }
 .spine-edit[open] summary { margin-bottom: 10px; }
 .spine-edit-row { display: flex; gap: 14px; align-items: flex-end; }
 .spine-preview {
-  flex: none; width: 90px; height: 196px; display: flex; align-items: flex-end; justify-content: center;
+  flex: none; width: 110px; height: 196px; display: flex; align-items: flex-end; justify-content: center;
   padding-bottom: 8px; border-radius: 6px;
   background: linear-gradient(to bottom, var(--case-back) 0 186px, var(--wood) 186px);
 }
@@ -367,3 +367,6 @@ input.color { width: 48px; height: 34px; padding: 2px; }
   width: auto; height: 32px; padding: 0 14px; border-radius: 999px;
   background: var(--accent); color: var(--bg); font-size: .9rem; font-weight: 600;
 }
+.spine.thin .sp-title, .spine.thin .sp-author { display: none; }
+.spine.thin { padding: 4px 0; }
+.muted.small { font-size: .8rem; }

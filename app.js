@@ -1196,13 +1196,15 @@ function spineColor(b) {
   const c = spineCache[b.id];
   return c && c.src === coverSrc(b) && c.color ? c.color : hashColor(b.title);
 }
-// Storlek: uppmätta cm (7,5 px/cm) > fotots proportioner > uppskattning från sidantal.
+// Tjockleken är proportionell mot antal sidor: 400 sidor blir exakt dubbelt så tjock som 200.
+// Saknas sidantal används uppmätt tjocklek (ca 160 sidor per cm), annars fotots proportioner.
+const PX_PER_PAGE = 0.1;
 function spineSize(b) {
   const s = b.spine || {};
-  const PX = 7.5;
-  const h = s.h ? Math.max(90, Math.min(184, Math.round(s.h * PX))) : 148 + (hashStr(b.id || b.title) % 36);
-  let w = s.w ? s.w * PX : s.ratio ? h * s.ratio : Math.max(24, (b.pages || 280) / 9);
-  w = Math.max(12, Math.min(70, Math.round(w)));
+  const h = s.h ? Math.max(90, Math.min(184, Math.round(s.h * 7.5))) : 148 + (hashStr(b.id || b.title) % 36);
+  const pages = b.pages || (s.w ? s.w * 160 : null);
+  let w = pages ? pages * PX_PER_PAGE : s.ratio ? h * s.ratio : 280 * PX_PER_PAGE;
+  w = Math.max(5, Math.min(100, Math.round(w * 2) / 2));
   return { w, h };
 }
 function spine(b) {
@@ -1211,7 +1213,7 @@ function spine(b) {
   const photo = b.spine?.img && /^data:image\//.test(b.spine.img) ? b.spine.img : '';
   const author = (b.authors || '').split(',')[0].trim().split(/\s+/).pop();
   const readers = entriesOf(b.id).filter((e) => e.status === 'reading').map((e) => db.members[e.member_id]);
-  return `<button type="button" class="spine${isLight(color) ? ' light' : ''}${photo ? ' photo' : ''}" data-id="${esc(b.id)}"
+  return `<button type="button" class="spine${isLight(color) ? ' light' : ''}${photo ? ' photo' : ''}${w < 15 ? ' thin' : ''}" data-id="${esc(b.id)}"
       style="--w:${w}px;--h:${h}px;--sc:${esc(color)}${photo ? `;--img:url(${photo})` : ''}" title="${esc(b.title)}${b.authors ? ' – ' + esc(b.authors) : ''}">
     <span class="sp-title">${esc(b.title)}</span>
     ${author ? `<span class="sp-author">${esc(author)}</span>` : ''}
@@ -1834,6 +1836,7 @@ $('#spineColor').addEventListener('input', (e) => {
   editSpineColorSet = true;
   renderSpinePreview();
 });
+$('#editForm').elements.pages.addEventListener('input', () => { if ($('#spineEdit').open) renderSpinePreview(); });
 ['#spineH', '#spineW'].forEach((sel) => $(sel).addEventListener('input', () => {
   editSpine.h = cm($('#spineH').value);
   editSpine.w = cm($('#spineW').value);

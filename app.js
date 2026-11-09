@@ -125,6 +125,8 @@ function booksForTab(tab) {
   if (tab === 'wishlist') list = list.filter((b) => !b.owned);
   return list;
 }
+// Bara lyssnad (ingen har läst den som bok) – då hör den hemma på ljudbokshyllan, inte i bokhyllan.
+const isAudioOnly = (es) => es.some((e) => e.audio) && !es.some((e) => !e.audio && e.status !== 'wishlist');
 function audioBooks() {
   const ids = new Set(Object.values(db.entries).filter((e) => e.audio && db.members[e.member_id]).map((e) => e.book_id));
   return [...ids].map((id) => db.books[id]).filter(Boolean);
@@ -209,7 +211,7 @@ function card(b) {
     if (b.owned) tg.push('📚 I hyllan');
     if (es.some((e) => e.audio)) tg.push('🎧 Ljudbok');
     if (tg.length) body += `<div class="tags">${tg.map((t) => `<span class="tag">${t}</span>`).join('')}</div>`;
-    else quick.push(['own', '📚 Till hyllan']);
+    else if (!isAudioOnly(es)) quick.push(['own', '📚 Till hyllan']);
   } else if (currentTab === 'wishlist') {
     body = names('Önskas av', byStatus('wishlist'));
     quick.push(['buy', '✓ Köpt']);
@@ -277,6 +279,10 @@ function quickAction(bookId, action) {
   if (action === 'own') {
     put('books', { ...b, owned: true });
     toast(`”${b.title}” ställd i bokhyllan 📚`);
+  }
+  if (action === 'unown') {
+    put('books', { ...b, owned: false });
+    toast(`”${b.title}” borttagen ur bokhyllan`);
   }
   if (action === 'buy') {
     put('books', { ...b, owned: true });
@@ -620,7 +626,7 @@ function addBook(data, to, memberId) {
     put('books', book);
   }
   const name = db.members[memberId]?.name;
-  if (to === 'reading' && $('#addOwned').checked && !book.owned) {
+  if (to === 'reading' && $('#addOwned').checked && !$('#addAudio').checked && !book.owned) {
     book = { ...book, owned: true };
     put('books', book);
   }
@@ -1073,12 +1079,19 @@ $('#results').addEventListener('click', (e) => {
   addBook(lastResults[+btn.dataset.i], btn.dataset.to, $('#addFor').value || me);
   $('#addDialog').close();
 });
-$('#addOwned').addEventListener('change', (e) => localStorage.setItem('mina-bocker:add-owned', e.target.checked ? '1' : '0'));
+$('#addOwned').addEventListener('change', (e) => {
+  localStorage.setItem('mina-bocker:add-owned', e.target.checked ? '1' : '0');
+  if (e.target.checked) $('#addAudio').checked = false;
+});
+// Ljudbok = ingen fysisk kopia, så "Vi har den hemma" kryssas ur (utan att ändra det sparade valet).
+$('#addAudio').addEventListener('change', (e) => {
+  $('#addOwned').checked = e.target.checked ? false : localStorage.getItem('mina-bocker:add-owned') === '1';
+});
 $('#manualBtn').addEventListener('click', () => {
   const q = $('#q').value.trim();
   const forId = $('#addFor').value || me;
   $('#addDialog').close();
-  openEdit(null, forId, { ...(normIsbn(q) ? { isbn: q } : { title: q }), ...($('#addOwned').checked ? { owned: true } : {}),
+  openEdit(null, forId, { ...(normIsbn(q) ? { isbn: q } : { title: q }), ...($('#addOwned').checked && !$('#addAudio').checked ? { owned: true } : {}),
     ...($('#addAudio').checked ? { audio: true } : {}) });
 });
 if ('BarcodeDetector' in window && navigator.mediaDevices?.getUserMedia) {
@@ -1463,7 +1476,8 @@ function openBook(id) {
   acts.push(localEpubs.has(id)
     ? '<button type="button" class="link-btn" data-bv="rmepub">Ta bort epub</button>'
     : '<button type="button" class="btn" data-bv="epub">＋ Epub</button>');
-  if (!b.owned) acts.push('<button type="button" class="btn" data-bv="own">📚 Till hyllan</button>');
+  if (!b.owned) acts.push(`<button type="button" class="btn" data-bv="own">📚 ${isAudioOnly(es) ? 'Vi har den som bok' : 'Till hyllan'}</button>`);
+  else acts.push('<button type="button" class="link-btn" data-bv="unown">Ta bort ur hyllan</button>');
   acts.push('<button type="button" class="btn" data-bv="edit">✎ Redigera</button>');
   $('#bvActions').innerHTML = acts.join('');
   if (!$('#bookDialog').open) $('#bookDialog').showModal();
@@ -1759,6 +1773,7 @@ $('#bookDialog').addEventListener('click', async (e) => {
   });
   if (a === 'start') quickAction(id, 'start');
   if (a === 'own') quickAction(id, 'own');
+  if (a === 'unown') quickAction(id, 'unown');
   if (a === 'progress') openProgress(entryId(id, target()));
   if (a === 'epub') $('#bvEpubFile').click();
   if (a === 'edit') { $('#bookDialog').close(); openEdit(id); }

@@ -88,6 +88,23 @@
       <div id="coverPicker" class="cover-picker" hidden></div>
       <input type="file" id="coverFile" accept="image/*" hidden>
       <label class="check"><input type="checkbox" name="owned"> Finns i bokhyllan</label>
+      <details class="spine-edit" id="spineEdit">
+        <summary>Bokrygg <span class="muted">– så här ser boken ut i hyllan</span></summary>
+        <div class="spine-edit-row">
+          <div id="spinePreview" class="spine-preview"></div>
+          <div class="fields">
+            <div class="actions wrap">
+              <button type="button" id="spinePhotoBtn" class="btn">📷 Fota bokryggen</button>
+              <button type="button" id="spineResetBtn" class="link-btn">Återställ</button>
+            </div>
+            <label class="inline">Färg <input type="color" id="spineColor" class="color"></label>
+            <div class="two">
+              <label>Höjd (cm) <input id="spineH" inputmode="decimal" placeholder="t.ex. 20"></label>
+              <label>Tjocklek (cm) <input id="spineW" inputmode="decimal" placeholder="t.ex. 2,5"></label>
+            </div>
+          </div>
+        </div>
+      </details>
 
       <section class="member-section">
         <div class="member-tabs" id="memberTabs"></div>
@@ -132,6 +149,32 @@
       <div id="bvNotes"></div>
       <div class="actions wrap" id="bvActions"></div>
       <input type="file" id="bvEpubFile" accept=".epub,application/epub+zip" hidden>
+    </div>
+  </dialog>
+
+  <!-- Fota bokryggen -->
+  <dialog id="spineDialog">
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2>Fota bokryggen</h2>
+        <button type="button" class="icon-btn" aria-label="Stäng" data-close>✕</button>
+      </div>
+      <p class="muted" id="spHelp">Ta en bild rakt framifrån – gärna på flera böcker i hyllan samtidigt. Dra sedan med fingret en ruta runt en bokrygg.</p>
+      <div class="actions wrap">
+        <button type="button" id="spTake" class="btn primary">📷 Ta/välj bild</button>
+        <button type="button" id="spLast" class="btn" hidden>Använd förra bilden</button>
+        <button type="button" id="spRotate" class="btn" hidden>↻ Vrid bilden</button>
+      </div>
+      <input type="file" id="spFile" accept="image/*" hidden>
+      <div class="sp-work" id="spWork" hidden>
+        <div class="sp-crop" id="spCrop"><canvas id="spCanvas"></canvas><div id="spRect" class="sp-rect"></div></div>
+        <div class="sp-result"><canvas id="spPreview"></canvas><span class="muted">Resultat</span></div>
+      </div>
+      <div class="actions">
+        <span class="spacer"></span>
+        <button type="button" class="btn" data-close>Avbryt</button>
+        <button type="button" id="spUse" class="btn primary" disabled>Använd</button>
+      </div>
     </div>
   </dialog>
 

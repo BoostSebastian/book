@@ -335,3 +335,31 @@ body.reading-mode { overflow: hidden; }
   padding: 10px 12px; cursor: pointer; border-bottom: 1px solid rgba(128,128,128,.15);
 }
 .rd-toc button:hover { background: rgba(128,128,128,.12); }
+
+/* ---------- Bokrygg: foto och mått ---------- */
+.spine.photo {
+  background:
+    linear-gradient(90deg, rgba(0,0,0,.25), rgba(255,255,255,.08) 20%, rgba(0,0,0,0) 45%, rgba(0,0,0,.18)),
+    var(--img) center / 100% 100% no-repeat, var(--sc);
+}
+.spine.photo .sp-title, .spine.photo .sp-author { visibility: hidden; }
+.spine.photo .sp-e { visibility: hidden; }
+.two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.spine-edit { border: 1px solid var(--border); border-radius: 12px; padding: 8px 12px; }
+.spine-edit summary { cursor: pointer; font-weight: 600; }
+.spine-edit[open] summary { margin-bottom: 10px; }
+.spine-edit-row { display: flex; gap: 14px; align-items: flex-end; }
+.spine-preview {
+  flex: none; width: 90px; height: 196px; display: flex; align-items: flex-end; justify-content: center;
+  padding-bottom: 8px; border-radius: 6px;
+  background: linear-gradient(to bottom, var(--case-back) 0 186px, var(--wood) 186px);
+}
+.spine-preview .spine:hover { transform: none; }
+input.color { width: 48px; height: 34px; padding: 2px; }
+.sp-work { display: flex; gap: 12px; align-items: flex-start; }
+.sp-crop { position: relative; touch-action: none; user-select: none; line-height: 0; flex: none; cursor: crosshair; }
+.sp-crop canvas { border-radius: 6px; max-width: 100%; }
+.sp-rect { position: absolute; border: 2px solid #ffcc33; box-shadow: 0 0 0 9999px rgba(0,0,0,.45); pointer-events: none; border-radius: 2px; }
+.sp-crop { overflow: hidden; }
+.sp-result { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; width: 100px; height: 250px; flex: none; }
+.sp-result canvas { max-height: 220px; max-width: 100px; border-radius: 3px; box-shadow: 0 2px 8px rgba(0,0,0,.3); }

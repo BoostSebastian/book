@@ -5,7 +5,7 @@
  *
  * Data (samma struktur lokalt och i Supabase, se supabase/schema.sql):
  *   members: { id, name, color }                       – familjemedlemmar (profiler)
- *   books:   { id, title, authors, year, isbn, cover, pages, owned, added_at }
+ *   books:   { id, title, authors, year, isbn, cover, pages, owned, spine, added_at }
  *   entries: { id: "<bok>:<person>", book_id, member_id,
  *              status: 'wishlist'|'reading'|'read', page, rating, notes, started_at, finished_at }
  *
@@ -21,7 +21,7 @@ const V1_KEY = 'mina-bocker:v1';
 const TABLES = ['members', 'books', 'entries']; // i FK-ordning
 const COLUMNS = {
   members: ['id', 'name', 'color', 'updated_at'],
-  books: ['id', 'title', 'authors', 'year', 'isbn', 'cover', 'pages', 'owned', 'added_at', 'updated_at'],
+  books: ['id', 'title', 'authors', 'year', 'isbn', 'cover', 'pages', 'owned', 'spine', 'added_at', 'updated_at'],
   entries: ['id', 'book_id', 'member_id', 'status', 'page', 'rating', 'notes', 'started_at', 'finished_at', 'updated_at'],
 };
 const COLORS = ['#7a4b2a', '#2f6f8f', '#a2456f', '#3f7d3a', '#c0702a', '#5a4fa0', '#4f8a8b', '#8f3b2f'];
@@ -335,6 +335,7 @@ function openEdit(bookId, memberId = target(), prefill = {}) {
   editCover = d.cover || '';
   $('#coverPicker').hidden = true;
   renderEditCover();
+  loadSpineEdit(b);
   $('#deleteBtn').hidden = !b;
 
   drafts = {};
@@ -399,8 +400,10 @@ function saveEdit() {
     pages: int(f.pages.value),
     owned: f.owned.checked,
     cover: editCover,
+    spine: cleanSpine(editSpine),
   };
-  if (!prev || COLUMNS.books.some((c) => c !== 'updated_at' && book[c] !== prev[c])) put('books', book);
+  const same = (x, y) => JSON.stringify(x ?? null) === JSON.stringify(y ?? null);
+  if (!prev || COLUMNS.books.some((c) => c !== 'updated_at' && !same(book[c], prev[c]))) put('books', book);
 
   for (const [memberId, d] of Object.entries(drafts)) {
     const id = entryId(book.id, memberId);
@@ -1189,17 +1192,27 @@ function isLight(color) {
   return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.62;
 }
 function spineColor(b) {
+  if (b.spine?.color) return b.spine.color;
   const c = spineCache[b.id];
   return c && c.src === coverSrc(b) && c.color ? c.color : hashColor(b.title);
 }
+// Storlek: uppmätta cm (7,5 px/cm) > fotots proportioner > uppskattning från sidantal.
+function spineSize(b) {
+  const s = b.spine || {};
+  const PX = 7.5;
+  const h = s.h ? Math.max(90, Math.min(184, Math.round(s.h * PX))) : 148 + (hashStr(b.id || b.title) % 36);
+  let w = s.w ? s.w * PX : s.ratio ? h * s.ratio : Math.max(24, (b.pages || 280) / 9);
+  w = Math.max(12, Math.min(70, Math.round(w)));
+  return { w, h };
+}
 function spine(b) {
-  const w = Math.max(24, Math.min(58, Math.round((b.pages || 280) / 9)));
-  const h = 148 + (hashStr(b.id) % 36);
+  const { w, h } = spineSize(b);
   const color = spineColor(b);
+  const photo = b.spine?.img && /^data:image\//.test(b.spine.img) ? b.spine.img : '';
   const author = (b.authors || '').split(',')[0].trim().split(/\s+/).pop();
   const readers = entriesOf(b.id).filter((e) => e.status === 'reading').map((e) => db.members[e.member_id]);
-  return `<button type="button" class="spine${isLight(color) ? ' light' : ''}" data-id="${esc(b.id)}"
-      style="--w:${w}px;--h:${h}px;--sc:${esc(color)}" title="${esc(b.title)}${b.authors ? ' – ' + esc(b.authors) : ''}">
+  return `<button type="button" class="spine${isLight(color) ? ' light' : ''}${photo ? ' photo' : ''}" data-id="${esc(b.id)}"
+      style="--w:${w}px;--h:${h}px;--sc:${esc(color)}${photo ? `;--img:url(${photo})` : ''}" title="${esc(b.title)}${b.authors ? ' – ' + esc(b.authors) : ''}">
     <span class="sp-title">${esc(b.title)}</span>
     ${author ? `<span class="sp-author">${esc(author)}</span>` : ''}
     ${readers.length ? `<span class="sp-marks">${readers.map((m) => `<i style="background:${esc(m.color)}" title="${esc(m.name)} läser"></i>`).join('')}</span>` : ''}
@@ -1211,7 +1224,7 @@ function extractSpineColors(list) {
   for (const b of list) {
     const src = coverSrc(b);
     const cached = spineCache[b.id];
-    if (!src || (cached && cached.src === src)) continue;
+    if (!src || b.spine?.img || b.spine?.color || (cached && cached.src === src)) continue;
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.referrerPolicy = 'no-referrer';
@@ -1274,6 +1287,7 @@ function openBook(id) {
   if (t && mine?.status !== 'reading') acts.push(`<button type="button" class="btn" data-bv="start">▶ Börja läsa${forName}</button>`);
   if (mine?.status === 'reading') acts.push(`<button type="button" class="btn" data-bv="progress">Hur långt?${forName}</button>`);
   acts.push('<span class="spacer"></span>');
+  if (b.owned) acts.push('<button type="button" class="btn" data-bv="spine" title="Fota bokryggen">📷 Rygg</button>');
   acts.push(localEpubs.has(id)
     ? '<button type="button" class="link-btn" data-bv="rmepub">Ta bort epub</button>'
     : '<button type="button" class="btn" data-bv="epub">＋ Epub</button>');
@@ -1563,6 +1577,13 @@ $('#bookDialog').addEventListener('click', async (e) => {
   const id = viewBookId;
   const a = btn.dataset.bv;
   if (a === 'read') openReader(id);
+  if (a === 'spine') openSpinePhoto(({ img, ratio }) => {
+    const cur = db.books[id];
+    if (!cur) return;
+    put('books', { ...cur, spine: { ...(cur.spine || {}), img, ratio } });
+    commit();
+    toast('Bokryggen sparad');
+  });
   if (a === 'start') quickAction(id, 'start');
   if (a === 'progress') openProgress(entryId(id, target()));
   if (a === 'epub') $('#bvEpubFile').click();
@@ -1614,6 +1635,210 @@ $('#rdFinish').addEventListener('click', finishFromReader);
 document.addEventListener('keydown', (e) => { if (rd && !$('#reader').hidden) readerKey(e); });
 window.addEventListener('resize', () => { if (rd) rd.rendition.resize(); });
 window.addEventListener('pagehide', saveReaderProgress);
+
+// ---------- Fota bokryggen ----------
+// Man tar en bild (gärna på hela hyllan), drar en ruta runt en bokrygg och får en
+// liten stående bild av ryggen. Bildens proportioner ger också bokens tjocklek i hyllan.
+let spSrc = null;        // canvas med källbilden (ev. vriden)
+let spLastPhoto = null;  // förra bilden, så man kan fota hela hyllan en gång
+let spRect = null;       // markeringen, normaliserad 0–1
+let spDone = null;       // anropas med { img, ratio }
+
+function openSpinePhoto(onDone) {
+  spDone = onDone;
+  spSrc = null;
+  spRect = null;
+  $('#spWork').hidden = true;
+  $('#spRotate').hidden = true;
+  $('#spLast').hidden = !spLastPhoto;
+  $('#spUse').disabled = true;
+  $('#spineDialog').showModal();
+}
+
+async function loadSpinePhoto(file) {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const k = Math.min(1, 2000 / Math.max(img.naturalWidth, img.naturalHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.naturalWidth * k);
+    c.height = Math.round(img.naturalHeight * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    useSpineSource(c);
+    spLastPhoto = c;
+  } catch {
+    toast('Kunde inte läsa bilden');
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function useSpineSource(c) {
+  spSrc = c;
+  spRect = { x: 0.42, y: 0.05, w: 0.16, h: 0.9 };
+  $('#spWork').hidden = false;
+  $('#spRotate').hidden = false;
+  drawSpineSource();
+}
+
+function drawSpineSource() {
+  const view = $('#spCanvas');
+  const maxW = Math.min($('#spineDialog').clientWidth - 140, 600);
+  const maxH = window.innerHeight * 0.55;
+  const k = Math.min(maxW / spSrc.width, maxH / spSrc.height);
+  view.width = Math.round(spSrc.width * k);
+  view.height = Math.round(spSrc.height * k);
+  view.getContext('2d').drawImage(spSrc, 0, 0, view.width, view.height);
+  drawSpineRect();
+}
+
+function drawSpineRect() {
+  const r = spRect, el = $('#spRect'), v = $('#spCanvas');
+  Object.assign(el.style, { left: `${r.x * v.width}px`, top: `${r.y * v.height}px`, width: `${r.w * v.width}px`, height: `${r.h * v.height}px` });
+  const out = cropSpine();
+  $('#spUse').disabled = !out;
+  const pv = $('#spPreview');
+  if (!out) { pv.width = pv.height = 0; return; }
+  pv.width = out.width;
+  pv.height = out.height;
+  pv.getContext('2d').drawImage(out, 0, 0);
+}
+
+// Klipper ut markeringen. Ligger ryggen ner (bredare än hög) vrids den till stående.
+function cropSpine() {
+  if (!spSrc || !spRect) return null;
+  const sx = spRect.x * spSrc.width, sy = spRect.y * spSrc.height;
+  const sw = spRect.w * spSrc.width, sh = spRect.h * spSrc.height;
+  if (sw < 6 || sh < 6) return null;
+  const lying = sw > sh;
+  const long = lying ? sw : sh, short = lying ? sh : sw;
+  const H = Math.min(280, Math.round(long));
+  const W = Math.max(4, Math.round((short / long) * H));
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  const ctx = c.getContext('2d');
+  if (lying) {
+    ctx.translate(0, H);
+    ctx.rotate(-Math.PI / 2);
+    ctx.drawImage(spSrc, sx, sy, sw, sh, 0, 0, H, W);
+  } else {
+    ctx.drawImage(spSrc, sx, sy, sw, sh, 0, 0, W, H);
+  }
+  return c;
+}
+
+function rotateSpineSource() {
+  const c = document.createElement('canvas');
+  c.width = spSrc.height;
+  c.height = spSrc.width;
+  const ctx = c.getContext('2d');
+  ctx.translate(c.width, 0);
+  ctx.rotate(Math.PI / 2);
+  ctx.drawImage(spSrc, 0, 0);
+  useSpineSource(c);
+  spLastPhoto = c;
+}
+
+let spDrag = null;
+$('#spCrop').addEventListener('pointerdown', (e) => {
+  const v = $('#spCanvas').getBoundingClientRect();
+  const x = (e.clientX - v.left) / v.width, y = (e.clientY - v.top) / v.height;
+  spDrag = { x0: Math.min(1, Math.max(0, x)), y0: Math.min(1, Math.max(0, y)) };
+  $('#spCrop').setPointerCapture(e.pointerId);
+  e.preventDefault();
+});
+$('#spCrop').addEventListener('pointermove', (e) => {
+  if (!spDrag) return;
+  const v = $('#spCanvas').getBoundingClientRect();
+  const x = Math.min(1, Math.max(0, (e.clientX - v.left) / v.width));
+  const y = Math.min(1, Math.max(0, (e.clientY - v.top) / v.height));
+  spRect = { x: Math.min(x, spDrag.x0), y: Math.min(y, spDrag.y0), w: Math.abs(x - spDrag.x0), h: Math.abs(y - spDrag.y0) };
+  drawSpineRect();
+});
+const endDrag = () => { spDrag = null; };
+$('#spCrop').addEventListener('pointerup', endDrag);
+$('#spCrop').addEventListener('pointercancel', endDrag);
+
+$('#spTake').addEventListener('click', () => $('#spFile').click());
+$('#spFile').addEventListener('change', (e) => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (f) loadSpinePhoto(f);
+});
+$('#spLast').addEventListener('click', () => { if (spLastPhoto) useSpineSource(spLastPhoto); });
+$('#spRotate').addEventListener('click', rotateSpineSource);
+$('#spUse').addEventListener('click', () => {
+  const out = cropSpine();
+  if (!out) return;
+  const res = { img: out.toDataURL('image/jpeg', 0.78), ratio: Math.round((out.width / out.height) * 1000) / 1000 };
+  $('#spineDialog').close();
+  spDone?.(res);
+});
+
+// ---------- Bokryggen i redigeringen ----------
+let editSpine = {};
+let editSpineColorSet = false;
+
+function toHex(color) {
+  const m = String(color).match(/rgb\((\d+),\s*(\d+),\s*(\d+)/);
+  if (!m) return /^#[0-9a-f]{6}$/i.test(color) ? color : '#7a4b2a';
+  return '#' + m.slice(1).map((n) => (+n).toString(16).padStart(2, '0')).join('');
+}
+const cm = (v) => { const n = parseFloat(String(v).replace(',', '.')); return n > 0 && n < 100 ? Math.round(n * 10) / 10 : null; };
+
+function loadSpineEdit(b) {
+  editSpine = { ...(b?.spine || {}) };
+  editSpineColorSet = !!editSpine.color;
+  $('#spineH').value = editSpine.h ? String(editSpine.h).replace('.', ',') : '';
+  $('#spineW').value = editSpine.w ? String(editSpine.w).replace('.', ',') : '';
+  $('#spineEdit').open = !!(editSpine.img || editSpine.color || editSpine.h || editSpine.w);
+  renderSpinePreview();
+}
+function draftBook() {
+  const f = $('#editForm').elements;
+  const prev = db.books[editBookId];
+  return { ...(prev || {}), id: editBookId || 'ny', title: f.title.value || '?', authors: f.authors.value, isbn: f.isbn.value,
+    pages: int(f.pages.value), cover: editCover, spine: cleanSpine(editSpine) };
+}
+function cleanSpine(s) {
+  const out = {};
+  if (s.img) { out.img = s.img; out.ratio = s.ratio; }
+  if (s.color) out.color = s.color;
+  if (s.h) out.h = s.h;
+  if (s.w) out.w = s.w;
+  return Object.keys(out).length ? out : null;
+}
+function renderSpinePreview() {
+  const b = draftBook();
+  $('#spinePreview').innerHTML = spine(b);
+  if (!editSpineColorSet) $('#spineColor').value = toHex(spineColor({ ...b, spine: null }));
+  else $('#spineColor').value = toHex(editSpine.color);
+}
+
+$('#spinePhotoBtn').addEventListener('click', () => openSpinePhoto(({ img, ratio }) => {
+  editSpine = { ...editSpine, img, ratio };
+  renderSpinePreview();
+}));
+$('#spineResetBtn').addEventListener('click', () => {
+  editSpine = {};
+  editSpineColorSet = false;
+  $('#spineH').value = '';
+  $('#spineW').value = '';
+  renderSpinePreview();
+});
+$('#spineColor').addEventListener('input', (e) => {
+  editSpine.color = e.target.value;
+  editSpineColorSet = true;
+  renderSpinePreview();
+});
+['#spineH', '#spineW'].forEach((sel) => $(sel).addEventListener('input', () => {
+  editSpine.h = cm($('#spineH').value);
+  editSpine.w = cm($('#spineW').value);
+  renderSpinePreview();
+}));
 
 // ---------- Start ----------
 (async function start() {

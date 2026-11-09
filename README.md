@@ -10,6 +10,8 @@ En webbapp (PWA) för hela familjen:
 Dessutom:
 
 - **Visuell bokhylla** – bokhyllan visas som bokryggar på hyllplan (färgen hämtas från omslaget, tjockleken från antal sidor). Tryck på en bok för att se den.
+- **Riktiga bokryggar** – fota hyllan och dra en ruta runt varje bokrygg (📷 *Rygg* i bokvyn), så ser hyllan i appen ut som din riktiga.
+  Ta gärna en bild på hela hyllan och välj *Använd förra bilden* för nästa bok. Under *Redigera → Bokrygg* kan du också sätta färg och mått (cm).
 - **Omslag** – hämtas automatiskt (Google Books / Open Library). Under *Redigera → Byt omslag* kan du välja bland flera omslag eller ta en bild på din egen bok.
 - **Läs epub** – importera dina epub-filer (＋ → *Importera epub-filer*, eller *＋ Epub* på en bok) och läs direkt i appen.
   Appen kommer ihåg var du är och uppdaterar hur långt du kommit, så resten av familjen ser det.

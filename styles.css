@@ -487,3 +487,16 @@ input.color { width: 48px; height: 34px; padding: 2px; }
 .lp-marks { position: absolute; z-index: 2; right: 3px; top: 3px; display: flex; gap: 2px; }
 .lp-marks .avatar.sm { width: 16px; height: 16px; font-size: .55rem; box-shadow: 0 0 0 1.5px rgba(255,255,255,.85); }
 .src { font-size: .7rem; letter-spacing: .04em; color: var(--accent); font-weight: 600; }
+
+/* ---------- Hämta uppgifter ---------- */
+.small-btn { padding: 6px 10px; font-size: .9rem; justify-self: start; }
+.match-panel { border: 1px solid var(--accent); border-radius: 12px; padding: 10px; display: grid; gap: 8px; }
+.match-head { display: flex; justify-content: space-between; align-items: center; }
+.match-item {
+  display: flex; gap: 10px; align-items: center; text-align: left; width: 100%;
+  padding: 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); cursor: pointer;
+}
+.match-item:hover { border-color: var(--accent); }
+.match-item .cover { width: 40px; height: 60px; font-size: 1rem; }
+.match-item .cover.ph .ph-t { font-size: .45rem; }
+.match-item .cover.ph .ph-a { display: none; }

@@ -368,6 +368,7 @@ function openEdit(bookId, memberId = target(), prefill = {}) {
   f.owned.checked = !!d.owned;
   editCover = d.cover || '';
   $('#coverPicker').hidden = true;
+  $('#matchPanel').hidden = true;
   renderEditCover();
   loadSpineEdit(b);
   $('#deleteBtn').hidden = !b;
@@ -487,6 +488,7 @@ async function searchGoogle(q, lang = '') {
       isbn: ids.find((i) => i.type === 'ISBN_13')?.identifier || ids.find((i) => i.type === 'ISBN_10')?.identifier || '',
       pages: v.pageCount || null,
       genres: genresFrom(v.categories),
+      gid: it.id,
       cover: googleImg(img),
     };
   });
@@ -1478,6 +1480,7 @@ function openBook(id) {
     : '<button type="button" class="btn" data-bv="epub">＋ Epub</button>');
   if (!b.owned) acts.push(`<button type="button" class="btn" data-bv="own">📚 ${isAudioOnly(es) ? 'Vi har den som bok' : 'Till hyllan'}</button>`);
   else acts.push('<button type="button" class="link-btn" data-bv="unown">Ta bort ur hyllan</button>');
+  acts.push('<button type="button" class="btn" data-bv="match" title="Hämta sidor, genre, år och omslag">🔄 Uppgifter</button>');
   acts.push('<button type="button" class="btn" data-bv="edit">✎ Redigera</button>');
   $('#bvActions').innerHTML = acts.join('');
   if (!$('#bookDialog').open) $('#bookDialog').showModal();
@@ -1777,6 +1780,7 @@ $('#bookDialog').addEventListener('click', async (e) => {
   if (a === 'progress') openProgress(entryId(id, target()));
   if (a === 'epub') $('#bvEpubFile').click();
   if (a === 'edit') { $('#bookDialog').close(); openEdit(id); }
+  if (a === 'match') { $('#bookDialog').close(); openEdit(id); openMatch(); }
   if (a === 'rmepub' && confirm('Ta bort epub-filen från den här enheten? Boken ligger kvar.')) {
     await fileDel(id).catch(() => {});
     localEpubs.delete(id);
@@ -2085,12 +2089,17 @@ async function autoMeta() {
     for (const b of todo) {
       const isbn = normIsbn(b.isbn || '');
       const author = (b.authors || '').split(',')[0].trim();
-      const q = isbn ? `isbn:${isbn}` : `intitle:${b.title.split(/\s*:\s*/)[0]}${author ? ` inauthor:${author}` : ''}`;
+      // Först ISBN, sedan titel + författare om ISBN inte gav något.
+      const queries = [isbn && `isbn:${isbn}`, `intitle:${b.title.split(/\s*:\s*/)[0]}${author ? ` inauthor:${author}` : ''}`].filter(Boolean);
       let info = null;
       try {
-        const r = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=5`);
-        if (!r.ok) break;
-        const items = (await r.json()).items || [];
+        let items = [];
+        for (const q of queries) {
+          const r = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=5`);
+          if (!r.ok) throw new Error('google ' + r.status);
+          items = (await r.json()).items || [];
+          if (items.length) break;
+        }
         const hit = items.find((it) => it.volumeInfo?.pageCount) || items[0];
         if (hit) {
           info = hit.volumeInfo || {};
@@ -2277,6 +2286,105 @@ $('#statsView').addEventListener('click', (e) => {
 $('#statsBtn').addEventListener('click', openStats);
 $('#statsClose').addEventListener('click', closeStats);
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#statsView').hidden && !document.querySelector('dialog[open]')) closeStats(); });
+
+// ---------- Hämta uppgifter (matcha boken mot Google Books och LIBRIS) ----------
+let matchResults = [];
+
+async function googleDetail(gid) {
+  try {
+    const r = await fetch(`https://www.googleapis.com/books/v1/volumes/${encodeURIComponent(gid)}`);
+    return r.ok ? (await r.json()).volumeInfo || null : null;
+  } catch { return null; }
+}
+
+async function openMatch() {
+  const el = $('#matchPanel');
+  const f = $('#editForm').elements;
+  const title = f.title.value.trim();
+  const author = f.authors.value.split(',')[0].trim();
+  const isbn = normIsbn(f.isbn.value);
+  if (!title && !isbn) { toast('Skriv en titel först'); return; }
+  el.hidden = false;
+  el.innerHTML = '<p class="muted">Söker i Google Books och LIBRIS…</p>';
+  el.scrollIntoView({ block: 'nearest' });
+  const q = `${title.split(/\s*:\s*/)[0]} ${author}`.trim();
+  const safe = (pr) => pr.catch(() => []);
+  const searches = [safe(searchGoogle(q)), safe(searchGoogle(q, 'sv')), safe(searchLibris(q))];
+  if (isbn) searches.unshift(safe(searchGoogle(isbn)), safe(searchLibris(isbn)));
+  matchResults = mergeResults(q, await Promise.all(searches)).slice(0, 8);
+  if (el.hidden) return;
+  if (!matchResults.length) {
+    el.innerHTML = '<p class="muted">Hittade ingen träff. Prova att ändra titeln eller fylla i ISBN och tryck igen.</p>';
+    return;
+  }
+  el.innerHTML = `<div class="match-head"><b>Välj rätt utgåva</b><button type="button" class="link-btn" data-match-close>Stäng</button></div>
+    ${matchResults.map((r, i) => `<button type="button" class="match-item" data-match="${i}">
+      ${coverHtml(r)}
+      <span class="info">
+        <span class="title">${esc(r.title)}</span>
+        <span class="author">${esc(r.authors)}${r.year ? ' · ' + esc(r.year) : ''}</span>
+        <span class="muted small">${[r.pages ? `${r.pages} s.` : '', (r.genres || []).join(', '), r.isbn ? `ISBN ${r.isbn}` : '', r.source === 'libris' ? 'LIBRIS' : ''].filter(Boolean).join(' · ') || 'Få uppgifter'}</span>
+      </span></button>`).join('')}`;
+}
+
+async function applyMatch(r) {
+  const el = $('#matchPanel');
+  el.innerHTML = '<p class="muted">Hämtar uppgifter…</p>';
+  // Hämta fullständiga uppgifter: Googles detaljsida har exakta genrer; LIBRIS-träffar kompletteras via ISBN hos Google.
+  let info = r.gid ? await googleDetail(r.gid) : null;
+  if (!info && r.isbn) {
+    const g = await searchGoogle(r.isbn).catch(() => []);
+    if (g[0]?.gid) info = await googleDetail(g[0].gid);
+    else if (g[0]) info = { pageCount: g[0].pages, imageLinks: g[0].cover ? { thumbnail: g[0].cover } : null };
+  }
+  const f = $('#editForm').elements;
+  const pages = r.pages || info?.pageCount || null;
+  const genres = r.genres?.length > (genresFrom(info?.categories).length) ? r.genres : genresFrom(info?.categories);
+  const cover = r.cover || googleImg(info?.imageLinks?.thumbnail || info?.imageLinks?.smallThumbnail);
+  const changed = [];
+  if (pages && int(f.pages.value) !== pages) { f.pages.value = pages; changed.push('sidor'); }
+  if (genres.length && f.genres.value.trim() !== genres.join(', ')) { f.genres.value = genres.join(', '); changed.push('genre'); }
+  const year = r.year || (info?.publishedDate || '').slice(0, 4);
+  if (year && f.year.value.trim() !== year) { f.year.value = year; changed.push('år'); }
+  if (r.isbn && normIsbn(f.isbn.value) !== normIsbn(r.isbn)) { f.isbn.value = r.isbn; changed.push('ISBN'); }
+  if (!f.authors.value.trim() && r.authors) { f.authors.value = r.authors; changed.push('författare'); }
+  if (cover && !editCover) { editCover = cover; changed.push('omslag'); }
+  renderEditCover();
+  if ($('#spineEdit').open) renderSpinePreview();
+  el.hidden = true;
+  toast(changed.length ? `Ifyllt: ${changed.join(', ')} – tryck Spara` : 'Uppgifterna stämde redan');
+}
+
+$('#matchBtn').addEventListener('click', () => { if ($('#matchPanel').hidden) openMatch(); else $('#matchPanel').hidden = true; });
+$('#matchPanel').addEventListener('click', (e) => {
+  if (e.target.closest('[data-match-close]')) { $('#matchPanel').hidden = true; return; }
+  const btn = e.target.closest('[data-match]');
+  if (btn) applyMatch(matchResults[+btn.dataset.match]);
+});
+
+// Alla böcker: kör bakgrundshämtningen igen för allt som saknar sidor, genre eller omslag.
+$('#metaAllBtn').addEventListener('click', async () => {
+  const missing = Object.values(db.books).filter((b) => !b.pages || !b.genres?.length || !b.cover);
+  if (!missing.length) { toast('Alla böcker har redan sidor, genre och omslag'); return; }
+  const ids = new Set(missing.map((b) => b.id));
+  saveJSON(META_TRIED_KEY, loadJSON(META_TRIED_KEY, []).filter((id) => !ids.has(id)));
+  saveJSON(COVER_TRIED_KEY, loadJSON(COVER_TRIED_KEY, []).filter((id) => !ids.has(id)));
+  const btn = $('#metaAllBtn');
+  btn.disabled = true;
+  btn.textContent = `Hämtar för ${missing.length} böcker…`;
+  try {
+    // autoMeta/autoCovers tar några böcker per varv; kör tills inget mer händer.
+    for (let round = 0; round < Math.ceil(missing.length / 10) + 1; round++) {
+      await autoMeta();
+      await autoCovers();
+    }
+    const still = Object.values(db.books).filter((b) => ids.has(b.id) && (!b.pages || !b.genres?.length)).length;
+    toast(still ? `Klart. ${still} böcker hittades inte – använd 🔄 Uppgifter på dem` : 'Klart – alla böcker har fått uppgifter');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🔄 Hämta uppgifter för alla';
+  }
+});
 
 // ---------- Start ----------
 (async function start() {

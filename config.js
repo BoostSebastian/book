@@ -4,5 +4,5 @@
 // Lämna tomt för att använda appen utan synk (bara lokalt i webbläsaren).
 window.BOOKS_CONFIG = {
   supabaseUrl: 'https://kzanjcdojvokoholmzis.supabase.co',
-  supabaseKey: '',
+  supabaseKey: 'sb_publishable_ZUIYX6MrhUWdHHEBOqL1MQ_1QJh5yhb',
 };

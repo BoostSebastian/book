@@ -1,6 +1,6 @@
 // Enkel offline-cache: appens egna filer cachas, omslag cachas när de visas.
-const CACHE = 'mina-bocker-v4';
-const ASSETS = ['./', 'index.html', 'styles.css', 'config.js', 'vendor/supabase-2.45.4.js', 'vendor/jszip-3.10.1.min.js', 'vendor/epub-0.3.93.min.js', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
+const CACHE = 'mina-bocker-v5';
+const ASSETS = ['./', 'index.html', 'styles.css', 'config.js', 'vendor/supabase-2.118.0.js', 'vendor/jszip-3.10.1.min.js', 'vendor/epub-0.3.93.min.js', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));

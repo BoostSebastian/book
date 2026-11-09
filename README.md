@@ -77,6 +77,6 @@ och öppna <http://localhost:8000>.
 | `app.js` | All logik: lagring, synk, familjeprofiler, sök, skanning, export/import |
 | `config.js` | Supabase-adress och publik nyckel |
 | `supabase/schema.sql` | Databastabeller och behörigheter |
-| `vendor/` | Supabase-klienten och epub-läsaren (epub.js + JSZip), lokala kopior så allt fungerar offline |
+| `vendor/` | Supabase-klienten (2.118) och epub-läsaren (epub.js + JSZip), lokala kopior så allt fungerar offline |
 | `sw.js` | Service worker för offlinestöd |
 | `manifest.webmanifest`, `icon*` | Gör appen installerbar |

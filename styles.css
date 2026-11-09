@@ -363,3 +363,7 @@ input.color { width: 48px; height: 34px; padding: 2px; }
 .sp-crop { overflow: hidden; }
 .sp-result { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 6px; width: 100px; height: 250px; flex: none; }
 .sp-result canvas { max-height: 220px; max-width: 100px; border-radius: 3px; box-shadow: 0 2px 8px rgba(0,0,0,.3); }
+.sync-dot.login {
+  width: auto; height: 32px; padding: 0 14px; border-radius: 999px;
+  background: var(--accent); color: var(--bg); font-size: .9rem; font-weight: 600;
+}

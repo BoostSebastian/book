@@ -595,7 +595,7 @@ function openWho() {
   $('#whoList').innerHTML = (ms.length ? ms.map((m) =>
     `<button type="button" class="who-pick" data-pick="${esc(m.id)}">${avatar(m)}${esc(m.name)}${m.id === me ? ' <span class="muted">(vald)</span>' : ''}</button>`).join('')
     : '<p class="muted">Skriv ditt namn för att komma igång. Lägg sedan till resten av familjen under ⋯.</p>') +
-    (sb && !session ? '<button type="button" class="link-btn" id="loginFirst">Har familjen redan ett konto? Logga in först</button>' : '');
+    (sb && !session ? '<p class="muted">Har familjen redan ett konto?</p><button type="button" class="btn primary" id="loginFirst">Logga in först</button>' : '');
   $('#newMemberName').value = '';
   if (!$('#whoDialog').open) $('#whoDialog').showModal();
 }
@@ -738,7 +738,7 @@ function updateSyncUI() {
   if (!session) state = 'loggedout';
   else if (state === 'ok' && outbox.length) state = 'pending';
   const look = {
-    loggedout: ['○', '', 'Inte inloggad – data sparas bara på den här enheten'],
+    loggedout: ['Logga in', 'login', 'Inte inloggad – data sparas bara på den här enheten'],
     syncing: ['◌', 'pending', 'Synkar…'],
     pending: ['●', 'pending', `${outbox.length} ändring(ar) väntar på att skickas`],
     ok: ['●', 'ok', 'Synkad'],

@@ -10,6 +10,9 @@ En webbapp (PWA) för hela familjen:
 Dessutom:
 
 - **Visuell bokhylla** – bokhyllan visas som bokryggar på hyllplan (färgen hämtas från omslaget, tjockleken från antal sidor). Tryck på en bok för att se den.
+- **Statistik (📊)** – läsåret per person eller för hela familjen: antal böcker och sidor, per månad, genrer, stämning, högst betyg, längsta/kortaste och alla omslag.
+- **Ljudböcker** – markera 🎧 när någon lyssnat på en bok. De får en egen hylla (*Bokhylla → 🎧 Ljudböcker*) och räknas för sig i statistiken.
+- **Genre och sidantal** fylls i automatiskt från Google Books och kan ändras under *Redigera*.
 - **Riktiga bokryggar** – fota hyllan och dra en ruta runt varje bokrygg (📷 *Rygg* i bokvyn), så ser hyllan i appen ut som din riktiga.
   Ta gärna en bild på hela hyllan och välj *Använd förra bilden* för nästa bok. Under *Redigera → Bokrygg* kan du också sätta färg och mått (cm).
 - **Omslag** – hämtas automatiskt (Google Books / Open Library). Under *Redigera → Byt omslag* kan du välja bland flera omslag eller ta en bild på din egen bok.
@@ -47,6 +50,8 @@ Fungerar i mobilen och på datorn, kan installeras på hemskärmen och fungerar 
 6. På Matildas telefon: öppna appen → *Logga in först* → samma e-post och lösenord → välj **Matilda**.
 7. *(Valfritt)* När kontot är skapat: **Authentication → Sign In / Providers** → stäng av
    *Allow new users to sign up*, så kan ingen annan skapa konton i ditt projekt.
+
+Har du kört `schema.sql` före november 2026: kör även [`supabase/uppdatering-2.sql`](supabase/uppdatering-2.sql) (genre, stämning och ljudbok).
 
 Utan `config.js` ifyllt fungerar appen precis som innan, fast bara lokalt i webbläsaren.
 Data från den första versionen flyttas automatiskt till din profil.

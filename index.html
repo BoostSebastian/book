@@ -17,6 +17,7 @@
     <div class="top-actions">
       <button id="syncBtn" class="sync-dot" aria-label="Synk" title="Synk"></button>
       <button id="meBtn" class="avatar-btn" aria-label="Byt användare"></button>
+      <button id="statsBtn" class="icon-btn" aria-label="Statistik" title="Statistik">📊</button>
       <button id="menuBtn" class="icon-btn" aria-label="Meny">⋯</button>
     </div>
   </header>
@@ -31,6 +32,7 @@
   <div class="people" id="people" aria-label="Visa för"></div>
   <div class="view-toggle" id="viewToggle" hidden>
     <button data-view="spines" aria-pressed="true">📚 Hylla</button>
+    <button data-view="audio" aria-pressed="false">🎧 Ljudböcker</button>
     <button data-view="list" aria-pressed="false">☰ Lista</button>
   </div>
 
@@ -50,6 +52,8 @@
         <button type="button" class="icon-btn" aria-label="Stäng" data-close>✕</button>
       </div>
       <label class="inline">För <select id="addFor"></select></label>
+      <label class="check"><input type="checkbox" id="addOwned"> <span>📚 Vi har den hemma – lägg den även i bokhyllan</span></label>
+      <label class="check"><input type="checkbox" id="addAudio"> <span>🎧 Ljudbok – lyssnar i stället för att läsa</span></label>
       <div class="search-row">
         <input id="q" type="search" placeholder="Titel, författare eller ISBN" autocomplete="off">
         <button type="button" id="scanBtn" class="btn" hidden>📷 Skanna</button>
@@ -83,6 +87,7 @@
             <label>Sidor <input name="pages" inputmode="numeric"></label>
             <label>ISBN <input name="isbn" inputmode="numeric"></label>
           </div>
+          <label>Genre <input name="genres" placeholder="t.ex. Fantasy, Thriller" autocomplete="off"></label>
         </div>
       </div>
       <div id="coverPicker" class="cover-picker" hidden></div>
@@ -102,6 +107,7 @@
               <label>Höjd (cm) <input id="spineH" inputmode="decimal" placeholder="t.ex. 20"></label>
               <label>Tjocklek (cm) <input id="spineW" inputmode="decimal" placeholder="t.ex. 2,5"></label>
             </div>
+            <p class="muted small">Tjockleken följer antal sidor. Tjocklek i cm används bara när sidantal saknas.</p>
           </div>
         </div>
       </details>
@@ -115,6 +121,7 @@
           <label><input type="radio" name="status" value="reading"> Läser</label>
           <label><input type="radio" name="status" value="read"> Läst</label>
         </fieldset>
+        <label class="check"><input type="checkbox" name="audio"> <span>🎧 Lyssnade som ljudbok</span></label>
         <label id="pageRow" class="inline">Kommit till sida <input name="page" inputmode="numeric" class="short"></label>
         <div class="stars-row"><span class="muted">Betyg</span><div class="stars" id="stars"></div></div>
         <label>Anteckningar <textarea name="notes" rows="2"></textarea></label>
@@ -217,6 +224,24 @@
     </form>
   </dialog>
 
+  <!-- Nytt lösenord -->
+  <dialog id="newPassDialog">
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2>Nytt lösenord</h2>
+        <button type="button" class="icon-btn" aria-label="Stäng" data-close>✕</button>
+      </div>
+      <p class="muted" id="newPassIntro"></p>
+      <input id="newPass1" type="password" placeholder="Nytt lösenord (minst 6 tecken)" autocomplete="new-password">
+      <input id="newPass2" type="password" placeholder="Upprepa lösenordet" autocomplete="new-password">
+      <div class="actions">
+        <span class="spacer"></span>
+        <button type="button" class="btn" data-close>Avbryt</button>
+        <button type="button" id="newPassSave" class="btn primary">Spara</button>
+      </div>
+    </div>
+  </dialog>
+
   <!-- Meny -->
   <dialog id="menuDialog">
     <form method="dialog" class="sheet" id="menuForm">
@@ -262,6 +287,20 @@
       <button type="button" id="rdFinish" class="btn" hidden>✓ Utläst</button>
       <span id="rdPct" class="rd-pct"></span>
     </div>
+  </div>
+
+  <!-- Statistik -->
+  <div id="statsView" class="stats-view" hidden>
+    <div class="stats-bar">
+      <button type="button" class="icon-btn" id="statsClose" aria-label="Tillbaka">←</button>
+      <h2>Läsåret</h2>
+    </div>
+    <div class="stats-inner">
+      <div class="chip-row" id="statsYears"></div>
+      <div class="chip-row" id="statsPeople"></div>
+      <div id="statsBody"></div>
+    </div>
+    <div id="vizTip" class="viz-tip" role="tooltip" hidden></div>
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>

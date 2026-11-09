@@ -5,9 +5,9 @@
  *
  * Data (samma struktur lokalt och i Supabase, se supabase/schema.sql):
  *   members: { id, name, color }                       – familjemedlemmar (profiler)
- *   books:   { id, title, authors, year, isbn, cover, pages, owned, spine, added_at }
+ *   books:   { id, title, authors, year, isbn, cover, pages, owned, spine, genres, moods, added_at }
  *   entries: { id: "<bok>:<person>", book_id, member_id,
- *              status: 'wishlist'|'reading'|'read', page, rating, notes, started_at, finished_at }
+ *              status: 'wishlist'|'reading'|'read', page, rating, notes, audio (ljudbok), started_at, finished_at }
  *
  * Lokalt först: allt sparas direkt i localStorage och läggs i en kö (outbox) som
  * skickas till Supabase när man är inloggad och har nät. Appen fungerar alltså offline.
@@ -21,8 +21,8 @@ const V1_KEY = 'mina-bocker:v1';
 const TABLES = ['members', 'books', 'entries']; // i FK-ordning
 const COLUMNS = {
   members: ['id', 'name', 'color', 'updated_at'],
-  books: ['id', 'title', 'authors', 'year', 'isbn', 'cover', 'pages', 'owned', 'spine', 'added_at', 'updated_at'],
-  entries: ['id', 'book_id', 'member_id', 'status', 'page', 'rating', 'notes', 'started_at', 'finished_at', 'updated_at'],
+  books: ['id', 'title', 'authors', 'year', 'isbn', 'cover', 'pages', 'owned', 'spine', 'genres', 'moods', 'added_at', 'updated_at'],
+  entries: ['id', 'book_id', 'member_id', 'status', 'page', 'rating', 'notes', 'audio', 'started_at', 'finished_at', 'updated_at'],
 };
 const COLORS = ['#7a4b2a', '#2f6f8f', '#a2456f', '#3f7d3a', '#c0702a', '#5a4fa0', '#4f8a8b', '#8f3b2f'];
 
@@ -125,6 +125,10 @@ function booksForTab(tab) {
   if (tab === 'wishlist') list = list.filter((b) => !b.owned);
   return list;
 }
+function audioBooks() {
+  const ids = new Set(Object.values(db.entries).filter((e) => e.audio && db.members[e.member_id]).map((e) => e.book_id));
+  return [...ids].map((id) => db.books[id]).filter(Boolean);
+}
 function latest(bookId, field) {
   return entriesOf(bookId).reduce((max, e) => ((e[field] || '') > max ? e[field] : max), '');
 }
@@ -139,13 +143,15 @@ function render() {
 
   renderPeople();
   renderHeader();
+  renderStats();
   if ($('#bookDialog').open) { if (db.books[viewBookId]) openBook(viewBookId); else $('#bookDialog').close(); }
   const vt = $('#viewToggle');
   vt.hidden = currentTab !== 'shelf';
   vt.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.view === shelfView)));
 
   const q = $('#filter').value.trim().toLowerCase();
-  let list = booksForTab(currentTab);
+  const audioShelf = currentTab === 'shelf' && shelfView === 'audio';
+  let list = audioShelf ? audioBooks() : booksForTab(currentTab);
   if (q) list = list.filter((b) => `${b.title} ${b.authors}`.toLowerCase().includes(q));
   list.sort((a, b) => {
     if (currentTab === 'read') return latest(b.id, 'finished_at').localeCompare(latest(a.id, 'finished_at'));
@@ -162,8 +168,18 @@ function render() {
       wishlist: name ? `${name} har inget på önskelistan.` : 'Önskelistan är tom.',
       read: name ? `${name} har inga lästa böcker ännu.` : 'Inga lästa böcker ännu.',
     }[currentTab];
+    if (audioShelf) {
+      el.innerHTML = `<div class="empty"><div class="big">🎧</div><p>${q ? 'Inga träffar.' : 'Inga ljudböcker ännu.'}</p>
+        ${q ? '' : '<p>Kryssa i <b>🎧 Ljudbok</b> när du lägger till en bok, eller under Redigera.</p>'}</div>`;
+      return;
+    }
     el.innerHTML = `<div class="empty"><div class="big">📚</div><p>${q ? 'Inga träffar.' : esc(empty)}</p>
       ${q ? '' : '<p>Tryck på <b>＋</b> för att lägga till en bok.</p>'}</div>`;
+    return;
+  }
+  if (audioShelf) {
+    el.innerHTML = `<div class="record-shelf">${list.map(record).join('')}</div>`;
+    extractSpineColors(list);
     return;
   }
   if (currentTab === 'shelf' && shelfView === 'spines') {
@@ -187,6 +203,13 @@ function card(b) {
     body = whoRows([...byStatus('reading'), ...byStatus('read')], b);
   } else if (currentTab === 'read') {
     body = whoRows(byStatus('read'), b);
+  }
+  if (currentTab === 'reading' || currentTab === 'read') {
+    const tg = [];
+    if (b.owned) tg.push('📚 I hyllan');
+    if (es.some((e) => e.audio)) tg.push('🎧 Ljudbok');
+    if (tg.length) body += `<div class="tags">${tg.map((t) => `<span class="tag">${t}</span>`).join('')}</div>`;
+    else quick.push(['own', '📚 Till hyllan']);
   } else if (currentTab === 'wishlist') {
     body = names('Önskas av', byStatus('wishlist'));
     quick.push(['buy', '✓ Köpt']);
@@ -218,7 +241,7 @@ function whoRows(es, b) {
   es.sort((x, y) => (x.status === y.status ? (pct(y, b) ?? y.page ?? 0) - (pct(x, b) ?? x.page ?? 0) : rank[x.status] - rank[y.status]));
   return `<div class="who-row">${es.map((e) => {
     const m = db.members[e.member_id];
-    const label = `${avatar(m, 'avatar sm')}<span class="name">${esc(m.name)}</span>`;
+    const label = `${avatar(m, 'avatar sm')}<span class="name">${e.audio ? '🎧 ' : ''}${esc(m.name)}</span>`;
     if (e.status === 'reading') {
       const p = pct(e, b);
       const pg = e.page ? `s. ${e.page}${b.pages ? ` / ${b.pages}` : ''}${p != null ? ` · ${p}%` : ''}` : 'Ange sida';
@@ -251,6 +274,10 @@ function renderHeader() {
 function quickAction(bookId, action) {
   const b = db.books[bookId];
   if (!b) return;
+  if (action === 'own') {
+    put('books', { ...b, owned: true });
+    toast(`”${b.title}” ställd i bokhyllan 📚`);
+  }
   if (action === 'buy') {
     put('books', { ...b, owned: true });
     for (const e of entriesOf(bookId)) if (e.status === 'wishlist') del('entries', e.id);
@@ -331,6 +358,7 @@ function openEdit(bookId, memberId = target(), prefill = {}) {
   f.year.value = d.year || '';
   f.isbn.value = d.isbn || '';
   f.pages.value = d.pages ?? '';
+  f.genres.value = (d.genres || []).join(', ');
   f.owned.checked = !!d.owned;
   editCover = d.cover || '';
   $('#coverPicker').hidden = true;
@@ -342,8 +370,8 @@ function openEdit(bookId, memberId = target(), prefill = {}) {
   for (const m of members()) {
     const e = b && db.entries[entryId(b.id, m.id)];
     drafts[m.id] = e
-      ? { status: e.status, page: e.page, rating: e.rating || 0, notes: e.notes || '' }
-      : { status: '', page: null, rating: 0, notes: '' };
+      ? { status: e.status, page: e.page, rating: e.rating || 0, notes: e.notes || '', audio: !!e.audio }
+      : { status: '', page: null, rating: 0, notes: '', audio: !!prefill.audio };
   }
   if (!b && memberId && drafts[memberId]) {
     drafts[memberId].status = { reading: 'reading', wishlist: 'wishlist', read: 'read' }[currentTab] || '';
@@ -356,12 +384,13 @@ function openEdit(bookId, memberId = target(), prefill = {}) {
 function storeDraft() {
   if (!editMember) return;
   const f = $('#editForm').elements;
-  drafts[editMember] = { status: f.status.value, page: int(f.page.value), rating: editRating, notes: f.notes.value.trim() };
+  drafts[editMember] = { status: f.status.value, page: int(f.page.value), rating: editRating, notes: f.notes.value.trim(), audio: f.audio.checked };
 }
 function loadDraft() {
   const f = $('#editForm').elements;
-  const d = drafts[editMember] || { status: '', page: null, rating: 0, notes: '' };
+  const d = drafts[editMember] || { status: '', page: null, rating: 0, notes: '', audio: false };
   f.status.value = d.status;
+  f.audio.checked = !!d.audio;
   f.page.value = d.page ?? '';
   f.notes.value = d.notes;
   editRating = d.rating;
@@ -398,6 +427,7 @@ function saveEdit() {
     year: f.year.value.trim(),
     isbn: f.isbn.value.trim(),
     pages: int(f.pages.value),
+    genres: f.genres.value.split(',').map((g) => g.trim()).filter(Boolean).slice(0, 5),
     owned: f.owned.checked,
     cover: editCover,
     spine: cleanSpine(editSpine),
@@ -415,6 +445,7 @@ function saveEdit() {
       page: d.status === 'reading' ? d.page : old?.page ?? null,
       rating: d.rating,
       notes: d.notes,
+      audio: !!d.audio,
     };
     if (d.status === 'reading' && old?.status !== 'reading') e.started_at = today();
     if (d.status === 'read' && old?.status !== 'read') e.finished_at = today();
@@ -433,10 +464,10 @@ function normIsbn(s) {
   return d.length === 10 || d.length === 13 ? d : null;
 }
 
-async function searchGoogle(q) {
+async function searchGoogle(q, lang = '') {
   const isbn = normIsbn(q);
   const query = isbn ? `isbn:${isbn}` : q;
-  const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=15&printType=books`);
+  const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=15&printType=books${lang ? `&langRestrict=${lang}` : ''}`);
   if (!res.ok) throw new Error('google ' + res.status);
   const data = await res.json();
   return (data.items || []).map((it) => {
@@ -449,6 +480,7 @@ async function searchGoogle(q) {
       year: (v.publishedDate || '').slice(0, 4),
       isbn: ids.find((i) => i.type === 'ISBN_13')?.identifier || ids.find((i) => i.type === 'ISBN_10')?.identifier || '',
       pages: v.pageCount || null,
+      genres: genresFrom(v.categories),
       cover: googleImg(img),
     };
   });
@@ -475,9 +507,11 @@ async function search(q) {
   const el = $('#results');
   if (q.length < 2) { el.innerHTML = ''; return; }
   el.innerHTML = '<p class="muted">Söker…</p>';
-  let results = [];
-  try { results = await searchGoogle(q); } catch { /* prova nästa källa */ }
-  if (!results.length) { try { results = await searchOpenLibrary(q); } catch { /* ingen träff */ } }
+  // Alla källor samtidigt; en källa som inte svarar hoppas över.
+  const safe = (pr) => pr.catch(() => []);
+  const [google, googleSv, libris] = await Promise.all([safe(searchGoogle(q)), safe(searchGoogle(q, 'sv')), safe(searchLibris(q))]);
+  let results = mergeResults(q, [google, googleSv, libris]);
+  if (!results.length) results = await safe(searchOpenLibrary(q));
   if (seq !== searchSeq) return;
   lastResults = results;
   if (!results.length) {
@@ -488,7 +522,7 @@ async function search(q) {
       ${coverHtml(r)}
       <div class="info">
         <span class="title">${esc(r.title)}</span>
-        <span class="author">${esc(r.authors)}${r.year ? ' · ' + esc(r.year) : ''}${r.pages ? ` · ${r.pages} s.` : ''}</span>
+        <span class="author">${esc(r.authors)}${r.year ? ' · ' + esc(r.year) : ''}${r.pages ? ` · ${r.pages} s.` : ''}${r.source === 'libris' ? ' · <span class="src">LIBRIS</span>' : ''}</span>
       </div>
       <div class="add">
         <button type="button" class="btn" data-i="${i}" data-to="reading">Läser</button>
@@ -496,6 +530,76 @@ async function search(q) {
         <button type="button" class="btn" data-i="${i}" data-to="wishlist">Önskar</button>
       </div>
     </div>`).join('');
+}
+
+// ---------- LIBRIS (Kungliga bibliotekets katalog – i stort sett alla böcker utgivna i Sverige) ----------
+const first = (v) => (Array.isArray(v) ? v[0] : v) || '';
+const list = (v) => (Array.isArray(v) ? v : v ? [v] : []);
+// "Lindgren, Astrid, 1907-2002" → "Astrid Lindgren"
+function librisName(n) {
+  const parts = String(n).split(',').map((x) => x.trim()).filter((x) => x && !/^\d{4}-?(\d{4})?\.?$/.test(x));
+  return parts.length >= 2 ? `${parts[1]} ${parts[0]}` : parts[0] || '';
+}
+async function searchLibris(q) {
+  const isbn = normIsbn(q);
+  const query = isbn ? `NUMM:${isbn}` : q;
+  const res = await fetch(`https://libris.kb.se/xsearch?query=${encodeURIComponent(query)}&format=json&format_level=full&n=25`);
+  if (!res.ok) throw new Error('libris ' + res.status);
+  const data = await res.json();
+  return (data.xsearch?.list || [])
+    .filter((r) => !r.type || /book|bok|text/i.test(first(r.type)))
+    .map((r) => {
+      const title = String(first(r.title)).split(' / ')[0].replace(/\s+:\s+/g, ': ').trim();
+      const isbns = list(r.isbn).map((x) => normIsbn(String(x).split(' ')[0])).filter(Boolean);
+      const pages = parseInt((String(first(r.extent)).match(/(\d+)\s*(s\.|sidor|p\.)/) || [])[1], 10) || null;
+      return {
+        title,
+        authors: [...new Set(list(r.creator).map(librisName).filter(Boolean))].slice(0, 3).join(', '),
+        year: (String(first(r.date)).match(/\d{4}/) || [''])[0],
+        isbn: isbns.find((x) => x.length === 13) || isbns[0] || '',
+        pages,
+        cover: '',
+        genres: [],
+        source: 'libris',
+      };
+    })
+    .filter((r) => r.title);
+}
+
+// Slå ihop träffar från flera källor: ta bort dubbletter (ISBN eller titel+efternamn),
+// fyll i det som saknas från dubbletten och sortera efter hur väl träffen matchar sökningen.
+const fold = (t) => String(t || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+function mergeResults(q, sources) {
+  const words = fold(q).split(' ').filter((w) => w.length > 1);
+  const out = [];
+  const byKey = new Map();
+  sources.forEach((src, si) => src.forEach((r, ri) => {
+    const last = fold((r.authors || '').split(',')[0]).split(' ').pop();
+    const keys = [normIsbn(r.isbn || ''), `${fold(r.title).split(' ').slice(0, 6).join(' ')}|${last}`,
+      `${fold(String(r.title).split(':')[0])}|${last}`].filter(Boolean);
+    const hit = keys.map((k) => byKey.get(k)).find(Boolean);
+    if (hit) {
+      for (const f of ['cover', 'pages', 'year', 'isbn']) if (!hit[f] && r[f]) hit[f] = r[f];
+      if (!hit.genres?.length && r.genres?.length) hit.genres = r.genres;
+      if (r.source === 'libris' && hit.source !== 'libris') { // svenska uppgifter vinner över Googles
+        hit.title = r.title;
+        hit.authors = r.authors || hit.authors;
+        hit.source = 'libris';
+      }
+      keys.forEach((k) => byKey.set(k, hit));
+      return;
+    }
+    const item = { ...r, order: si * 100 + ri };
+    out.push(item);
+    keys.forEach((k) => byKey.set(k, item));
+  }));
+  const score = (r) => {
+    const hay = fold(`${r.title} ${r.authors}`);
+    const t = fold(r.title);
+    const found = words.filter((w) => hay.includes(w)).length / (words.length || 1);
+    return found + (t.startsWith(fold(q)) ? 0.4 : 0) + (r.cover ? 0.15 : 0) + (r.isbn ? 0.05 : 0) - r.order / 2000;
+  };
+  return out.sort((a, b) => score(b) - score(a)).slice(0, 25);
 }
 
 function findDuplicate(data) {
@@ -509,13 +613,17 @@ function addBook(data, to, memberId) {
   let book = findDuplicate(data);
   if (!book) {
     book = { id: uid(), title: data.title || 'Utan titel', authors: data.authors || '', year: data.year || '',
-      isbn: data.isbn || '', cover: data.cover || '', pages: data.pages || null, owned: false, added_at: today() };
+      isbn: data.isbn || '', cover: data.cover || '', pages: data.pages || null, genres: data.genres || [], owned: false, added_at: today() };
     put('books', book);
   } else if ((!book.pages && data.pages) || (!book.cover && data.cover)) {
     book = { ...book, pages: book.pages || data.pages || null, cover: book.cover || data.cover || '' };
     put('books', book);
   }
   const name = db.members[memberId]?.name;
+  if (to === 'reading' && $('#addOwned').checked && !book.owned) {
+    book = { ...book, owned: true };
+    put('books', book);
+  }
   if (to === 'shelf') {
     if (!book.owned) put('books', { ...book, owned: true });
     toast(`”${book.title}” ställd i bokhyllan`);
@@ -523,6 +631,7 @@ function addBook(data, to, memberId) {
     const old = db.entries[entryId(book.id, memberId)];
     const status = to === 'reading' ? 'reading' : 'wishlist';
     put('entries', { ...blankEntry(book.id, memberId), ...old, status,
+      ...(status === 'reading' && $('#addAudio').checked ? { audio: true } : {}),
       ...(status === 'reading' && old?.status !== 'reading' ? { started_at: today(), page: null } : {}) });
     toast(status === 'reading' ? `${name} läser nu ”${book.title}”` : `”${book.title}” på ${name}s önskelista`);
   }
@@ -591,6 +700,7 @@ function addMember(name) {
 }
 
 function openWho() {
+  if ($('#newPassDialog').open) return; // visas när lösenordet är valt
   const ms = members();
   $('#whoList').innerHTML = (ms.length ? ms.map((m) =>
     `<button type="button" class="who-pick" data-pick="${esc(m.id)}">${avatar(m)}${esc(m.name)}${m.id === me ? ' <span class="muted">(vald)</span>' : ''}</button>`).join('')
@@ -628,6 +738,10 @@ function migrateV1(list = loadJSON(V1_KEY, null), memberId = me) {
 
 // ---------- Synk (Supabase) ----------
 const cfg = window.BOOKS_CONFIG || {};
+// Läs av återställningslänken från mejlet innan Supabase-klienten tar bort den ur adressen.
+const authHash = new URLSearchParams(location.hash.slice(1));
+let recoveryPending = authHash.get('type') === 'recovery';
+const authLinkError = authHash.get('error_description');
 const sb = cfg.supabaseUrl && cfg.supabaseKey && window.supabase
   ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey)
   : null;
@@ -657,6 +771,7 @@ async function sync() {
   } catch (err) {
     console.warn('Synk misslyckades', err);
     syncError = err?.message || String(err);
+    if (/column|schema cache|PGRST204/i.test(syncError)) syncError = 'Databasen behöver uppdateras – kör supabase/uppdatering-2.sql i Supabase (SQL Editor)';
     setSyncState(navigator.onLine ? 'error' : 'offline');
   } finally {
     syncing = false;
@@ -713,6 +828,7 @@ async function pull() {
   saveJSON(DB_KEY, db);
   render();
   setTimeout(autoCovers, 1000);
+  setTimeout(autoMeta, 3000);
   if (me && !db.members[me] && members().length) openWho(); // min profil togs bort på en annan enhet
 }
 
@@ -769,12 +885,14 @@ function renderSyncPanel(statusText) {
         <button type="button" id="loginBtn" class="btn primary">Logga in</button>
         <button type="button" id="signupBtn" class="btn">Skapa familjekonto</button>
       </div>
+      <button type="button" id="forgotBtn" class="link-btn">Glömt lösenord?</button>
     </div>`;
     return;
   }
   el.innerHTML = `<p class="muted">Inloggad som <b>${esc(session.user.email)}</b> · ${esc(statusText || '')}</p>
     <div class="actions">
       <button type="button" id="syncNowBtn" class="btn">⟳ Synka nu</button>
+      <button type="button" id="passwordBtn" class="btn">Byt lösenord</button>
       <button type="button" id="logoutBtn" class="btn">Logga ut</button>
     </div>`;
 }
@@ -795,6 +913,7 @@ async function onSession(s) {
   const was = session?.user?.id;
   session = s;
   updateSyncUI();
+  if (s && recoveryPending) { recoveryPending = false; openNewPassword(true); }
   if (s && s.user.id !== was) {
     subscribe();
     await sync();
@@ -802,6 +921,36 @@ async function onSession(s) {
   } else if (!s) {
     subscribe();
   }
+}
+
+// ---------- Lösenord ----------
+async function forgotPassword() {
+  const email = $('#email').value.trim();
+  if (!email) { toast('Skriv din e-post först'); $('#email').focus(); return; }
+  const redirectTo = location.origin + location.pathname;
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
+  if (error) { toast(error.message); return; }
+  toast('Kolla mejlen – öppna länken på den här enheten för att välja nytt lösenord');
+}
+
+function openNewPassword(fromLink) {
+  $('#newPassIntro').textContent = fromLink
+    ? 'Välj ett nytt lösenord för familjekontot.'
+    : `Nytt lösenord för ${session?.user?.email || 'kontot'}. Alla i familjen behöver logga in med det nya på sina enheter.`;
+  $('#newPass1').value = '';
+  $('#newPass2').value = '';
+  $('#newPassDialog').showModal();
+  $('#newPass1').focus();
+}
+
+async function saveNewPassword() {
+  const a = $('#newPass1').value, b = $('#newPass2').value;
+  if (a.length < 6) { toast('Lösenordet måste vara minst 6 tecken'); return; }
+  if (a !== b) { toast('Lösenorden är inte lika'); return; }
+  const { error } = await sb.auth.updateUser({ password: a });
+  if (error) { toast(error.message); return; }
+  $('#newPassDialog').close();
+  toast('Lösenordet är bytt ✓');
 }
 
 // ---------- Export / import ----------
@@ -885,7 +1034,7 @@ $('#filter').addEventListener('input', render);
 $('#list').addEventListener('click', (e) => {
   const prog = e.target.closest('[data-progress]');
   if (prog) { openProgress(prog.dataset.progress); return; }
-  const sp = e.target.closest('.spine');
+  const sp = e.target.closest('.spine, .lp');
   if (sp) { openBook(sp.dataset.id); return; }
   const card = e.target.closest('.card');
   if (!card) return;
@@ -905,6 +1054,8 @@ $('#addBtn').addEventListener('click', () => {
   $('#addFor').innerHTML = members().map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join('');
   $('#addFor').value = target();
   $('#addFor').closest('label').hidden = members().length < 2;
+  $('#addOwned').checked = localStorage.getItem('mina-bocker:add-owned') === '1';
+  $('#addAudio').checked = false;
   $('#addDialog').showModal();
   $('#q').focus();
 });
@@ -922,11 +1073,13 @@ $('#results').addEventListener('click', (e) => {
   addBook(lastResults[+btn.dataset.i], btn.dataset.to, $('#addFor').value || me);
   $('#addDialog').close();
 });
+$('#addOwned').addEventListener('change', (e) => localStorage.setItem('mina-bocker:add-owned', e.target.checked ? '1' : '0'));
 $('#manualBtn').addEventListener('click', () => {
   const q = $('#q').value.trim();
   const forId = $('#addFor').value || me;
   $('#addDialog').close();
-  openEdit(null, forId, normIsbn(q) ? { isbn: q } : { title: q });
+  openEdit(null, forId, { ...(normIsbn(q) ? { isbn: q } : { title: q }), ...($('#addOwned').checked ? { owned: true } : {}),
+    ...($('#addAudio').checked ? { audio: true } : {}) });
 });
 if ('BarcodeDetector' in window && navigator.mediaDevices?.getUserMedia) {
   $('#scanBtn').hidden = false;
@@ -1014,6 +1167,8 @@ $('#menuDialog').addEventListener('click', async (e) => {
   const id = e.target.id;
   if (id === 'loginBtn') login(false);
   if (id === 'signupBtn') login(true);
+  if (id === 'forgotBtn') forgotPassword();
+  if (id === 'passwordBtn') { $('#menuDialog').close(); openNewPassword(false); }
   if (id === 'syncNowBtn') sync();
   if (id === 'logoutBtn' && confirm('Logga ut? Böckerna ligger kvar på den här enheten men synkas inte längre.')) await sb.auth.signOut();
   if (id === 'familyAdd') {
@@ -1046,6 +1201,9 @@ $('#menuDialog').addEventListener('keydown', (e) => {
   if (e.target.id === 'familyNew') { e.preventDefault(); $('#familyAdd').click(); }
   if (e.target.id === 'password') { e.preventDefault(); login(false); }
 });
+$('#newPassSave').addEventListener('click', saveNewPassword);
+$('#newPassDialog').addEventListener('close', () => { if (!me || !db.members[me]) openWho(); });
+$('#newPass2').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveNewPassword(); } });
 $('#exportBtn').addEventListener('click', exportData);
 $('#importBtn').addEventListener('click', () => $('#importFile').click());
 $('#importFile').addEventListener('change', (e) => {
@@ -1196,27 +1354,41 @@ function spineColor(b) {
   const c = spineCache[b.id];
   return c && c.src === coverSrc(b) && c.color ? c.color : hashColor(b.title);
 }
-// Storlek: uppmätta cm (7,5 px/cm) > fotots proportioner > uppskattning från sidantal.
+// Tjockleken är proportionell mot antal sidor: 400 sidor blir exakt dubbelt så tjock som 200.
+// Saknas sidantal används uppmätt tjocklek (ca 160 sidor per cm), annars fotots proportioner.
+const PX_PER_PAGE = 0.1;
 function spineSize(b) {
   const s = b.spine || {};
-  const PX = 7.5;
-  const h = s.h ? Math.max(90, Math.min(184, Math.round(s.h * PX))) : 148 + (hashStr(b.id || b.title) % 36);
-  let w = s.w ? s.w * PX : s.ratio ? h * s.ratio : Math.max(24, (b.pages || 280) / 9);
-  w = Math.max(12, Math.min(70, Math.round(w)));
+  const h = s.h ? Math.max(90, Math.min(184, Math.round(s.h * 7.5))) : 148 + (hashStr(b.id || b.title) % 36);
+  const pages = b.pages || (s.w ? s.w * 160 : null);
+  let w = pages ? pages * PX_PER_PAGE : s.ratio ? h * s.ratio : 280 * PX_PER_PAGE;
+  w = Math.max(5, Math.min(100, Math.round(w * 2) / 2));
   return { w, h };
 }
-function spine(b) {
+// Ljudbok som LP-skiva: kvadratiskt omslag med en vinylskiva som sticker ut (etiketten i omslagets färg).
+function record(b) {
+  const listeners = entriesOf(b.id).filter((e) => e.audio).map((e) => db.members[e.member_id]);
+  const color = spineColor(b);
+  return `<div class="lp-slot"><button type="button" class="lp" data-id="${esc(b.id)}" style="--sc:${esc(color)}"
+      title="${esc(b.title)}${b.authors ? ' – ' + esc(b.authors) : ''}">
+    <span class="lp-disc" aria-hidden="true"><span class="lp-label"></span></span>
+    <span class="lp-sleeve">${coverHtml(b, 'cover lp-cover')}</span>
+    ${listeners.length ? `<span class="lp-marks">${listeners.map((m) => avatar(m, 'avatar sm')).join('')}</span>` : ''}
+  </button></div>`;
+}
+function spine(b, audio = false) {
   const { w, h } = spineSize(b);
   const color = spineColor(b);
   const photo = b.spine?.img && /^data:image\//.test(b.spine.img) ? b.spine.img : '';
   const author = (b.authors || '').split(',')[0].trim().split(/\s+/).pop();
   const readers = entriesOf(b.id).filter((e) => e.status === 'reading').map((e) => db.members[e.member_id]);
-  return `<button type="button" class="spine${isLight(color) ? ' light' : ''}${photo ? ' photo' : ''}" data-id="${esc(b.id)}"
+  return `<button type="button" class="spine${isLight(color) ? ' light' : ''}${photo ? ' photo' : ''}${w < 15 ? ' thin' : ''}" data-id="${esc(b.id)}"
       style="--w:${w}px;--h:${h}px;--sc:${esc(color)}${photo ? `;--img:url(${photo})` : ''}" title="${esc(b.title)}${b.authors ? ' – ' + esc(b.authors) : ''}">
     <span class="sp-title">${esc(b.title)}</span>
     ${author ? `<span class="sp-author">${esc(author)}</span>` : ''}
     ${readers.length ? `<span class="sp-marks">${readers.map((m) => `<i style="background:${esc(m.color)}" title="${esc(m.name)} läser"></i>`).join('')}</span>` : ''}
     ${localEpubs.has(b.id) ? '<span class="sp-e" title="E-bok på den här enheten">e</span>' : ''}
+    ${audio ? '<span class="sp-audio" aria-hidden="true">🎧</span>' : ''}
   </button>`;
 }
 // Bokryggens färg hämtas från omslaget (när bildservern tillåter det), annars en färg från titeln.
@@ -1232,7 +1404,7 @@ function extractSpineColors(list) {
       spineCache[b.id] = { src, color };
       saveJSON(SPINE_KEY, spineCache);
       if (!color) return;
-      document.querySelectorAll('.spine').forEach((el) => {
+      document.querySelectorAll('.spine, .lp').forEach((el) => {
         if (el.dataset.id !== b.id) return;
         el.style.setProperty('--sc', color);
         el.classList.toggle('light', isLight(color));
@@ -1291,6 +1463,7 @@ function openBook(id) {
   acts.push(localEpubs.has(id)
     ? '<button type="button" class="link-btn" data-bv="rmepub">Ta bort epub</button>'
     : '<button type="button" class="btn" data-bv="epub">＋ Epub</button>');
+  if (!b.owned) acts.push('<button type="button" class="btn" data-bv="own">📚 Till hyllan</button>');
   acts.push('<button type="button" class="btn" data-bv="edit">✎ Redigera</button>');
   $('#bvActions').innerHTML = acts.join('');
   if (!$('#bookDialog').open) $('#bookDialog').showModal();
@@ -1585,6 +1758,7 @@ $('#bookDialog').addEventListener('click', async (e) => {
     toast('Bokryggen sparad');
   });
   if (a === 'start') quickAction(id, 'start');
+  if (a === 'own') quickAction(id, 'own');
   if (a === 'progress') openProgress(entryId(id, target()));
   if (a === 'epub') $('#bvEpubFile').click();
   if (a === 'edit') { $('#bookDialog').close(); openEdit(id); }
@@ -1834,11 +2008,260 @@ $('#spineColor').addEventListener('input', (e) => {
   editSpineColorSet = true;
   renderSpinePreview();
 });
+$('#editForm').elements.pages.addEventListener('input', () => { if ($('#spineEdit').open) renderSpinePreview(); });
 ['#spineH', '#spineW'].forEach((sel) => $(sel).addEventListener('input', () => {
   editSpine.h = cm($('#spineH').value);
   editSpine.w = cm($('#spineW').value);
   renderSpinePreview();
 }));
+
+// ---------- Genre och stämning ----------
+const GENRE_SV = {
+  'fiction': 'Skönlitteratur', 'literary': 'Skönlitteratur', 'general': null,
+  'science fiction': 'Science fiction', 'time travel': 'Science fiction', 'space opera': 'Science fiction', 'dystopian': 'Dystopi',
+  'fantasy': 'Fantasy', 'epic': 'Fantasy', 'thrillers': 'Thriller', 'suspense': 'Thriller', 'mystery & detective': 'Deckare',
+  'crime': 'Deckare', 'romance': 'Romantik', 'horror': 'Skräck', 'historical': 'Historisk roman', 'action & adventure': 'Äventyr',
+  'war & military': 'Krig', 'humorous': 'Humor', 'humor': 'Humor', 'biography & autobiography': 'Biografi', 'history': 'Historia',
+  'self-help': 'Självhjälp', 'business & economics': 'Ekonomi', 'psychology': 'Psykologi', 'science': 'Vetenskap',
+  'juvenile fiction': 'Barn & unga', 'young adult fiction': 'Barn & unga', 'juvenile nonfiction': 'Barn & unga',
+  'comics & graphic novels': 'Serier', 'cooking': 'Mat', 'health & fitness': 'Hälsa', 'philosophy': 'Filosofi',
+  'religion': 'Religion', 'political science': 'Samhälle', 'social science': 'Samhälle', 'true crime': 'True crime',
+  'travel': 'Resor', 'sports & recreation': 'Sport', 'family & relationships': 'Relationer', 'body, mind & spirit': 'Andlighet',
+  'poetry': 'Poesi', 'drama': 'Drama', 'art': 'Konst', 'music': 'Musik', 'nature': 'Natur', 'technology & engineering': 'Teknik',
+  'computers': 'Teknik', 'education': 'Utbildning', 'medical': 'Hälsa', 'mathematics': 'Vetenskap', 'literary criticism': 'Litteratur',
+};
+const FICTION_ROOTS = ['fiction', 'juvenile fiction', 'young adult fiction'];
+const cap = (t) => t.charAt(0).toUpperCase() + t.slice(1);
+
+// Google Books-kategorier ("Fiction / Science Fiction / Time Travel") → svenska genrer
+function genresFrom(categories) {
+  const out = [];
+  const add = (g) => { if (g && !out.includes(g)) out.push(g); };
+  for (const c of categories || []) {
+    const parts = String(c).split('/').map((x) => x.trim().toLowerCase()).filter(Boolean);
+    if (!parts.length) continue;
+    if (FICTION_ROOTS.includes(parts[0])) {
+      if (parts[0] !== 'fiction') add('Barn & unga');
+      const sub = parts.slice(1).map((x) => GENRE_SV[x]).find(Boolean);
+      add(sub || (parts[0] === 'fiction' ? 'Skönlitteratur' : null));
+    } else {
+      add(GENRE_SV[parts[0]] === undefined ? cap(parts[0]) : GENRE_SV[parts[0]]);
+    }
+  }
+  return out.slice(0, 3);
+}
+
+const MOODS_SV = {
+  adventurous: 'Äventyrlig', moving: 'Gripande', funny: 'Rolig', dark: 'Mörk', emotional: 'Känslosam', hopeful: 'Hoppfull',
+  informative: 'Lärorik', inspiring: 'Inspirerande', lighthearted: 'Lättsam', mysterious: 'Mystisk', reflective: 'Eftertänksam',
+  relaxing: 'Avkopplande', sad: 'Sorglig', tense: 'Spännande', challenging: 'Utmanande',
+};
+const moodSv = (m) => MOODS_SV[String(m).toLowerCase()] || cap(String(m));
+
+// Fyll i sidantal, genre och år i bakgrunden för böcker som saknar det.
+const META_TRIED_KEY = 'mina-bocker:meta-tried';
+let autoMetaRunning = false;
+async function autoMeta() {
+  if (autoMetaRunning || !navigator.onLine) return;
+  autoMetaRunning = true;
+  try {
+    const tried = new Set(loadJSON(META_TRIED_KEY, []));
+    const todo = Object.values(db.books).filter((b) => (!b.pages || !b.genres?.length) && !tried.has(b.id)).slice(0, 12);
+    for (const b of todo) {
+      const isbn = normIsbn(b.isbn || '');
+      const author = (b.authors || '').split(',')[0].trim();
+      const q = isbn ? `isbn:${isbn}` : `intitle:${b.title.split(/\s*:\s*/)[0]}${author ? ` inauthor:${author}` : ''}`;
+      let info = null;
+      try {
+        const r = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=5`);
+        if (!r.ok) break;
+        const items = (await r.json()).items || [];
+        const hit = items.find((it) => it.volumeInfo?.pageCount) || items[0];
+        if (hit) {
+          info = hit.volumeInfo || {};
+          const d = await fetch(`https://www.googleapis.com/books/v1/volumes/${hit.id}`);
+          if (d.ok) info = { ...info, ...((await d.json()).volumeInfo || {}) };
+        }
+      } catch { break; }
+      if (!info?.pageCount) { // svenska böcker: fråga LIBRIS om sidantal och år
+        try {
+          const lq = isbn || `${b.title.split(/\s*:\s*/)[0]} ${author}`;
+          const hit = (await searchLibris(lq)).find((r) => r.pages);
+          if (hit) info = { ...(info || {}), pageCount: hit.pages, publishedDate: info?.publishedDate || hit.year };
+        } catch { /* LIBRIS svarar inte */ }
+      }
+      tried.add(b.id);
+      saveJSON(META_TRIED_KEY, [...tried]);
+      const cur = db.books[b.id];
+      if (!cur || !info) continue;
+      const genres = cur.genres?.length ? cur.genres : genresFrom(info.categories);
+      const upd = { ...cur, pages: cur.pages || info.pageCount || null, genres, year: cur.year || (info.publishedDate || '').slice(0, 4) };
+      if (upd.pages !== cur.pages || upd.year !== cur.year || JSON.stringify(upd.genres) !== JSON.stringify(cur.genres || [])) {
+        put('books', upd);
+        commit();
+      }
+    }
+  } finally {
+    autoMetaRunning = false;
+  }
+}
+
+// ---------- Statistik ----------
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
+let statsYear = String(new Date().getFullYear());
+let statsWho = null;
+
+function openStats() {
+  statsWho = who;
+  $('#statsView').hidden = false;
+  document.body.classList.add('reading-mode');
+  renderStats();
+  $('#statsView').scrollTop = 0;
+}
+function closeStats() {
+  $('#statsView').hidden = true;
+  document.body.classList.remove('reading-mode');
+  $('#vizTip').hidden = true;
+}
+
+function renderStats() {
+  if ($('#statsView').hidden) return;
+  const ms = members();
+  if (statsWho !== 'all' && !db.members[statsWho]) statsWho = ms.length > 1 ? 'all' : me;
+  const readAll = Object.values(db.entries).filter((e) => e.status === 'read' && db.books[e.book_id] && db.members[e.member_id]
+    && (statsWho === 'all' || e.member_id === statsWho));
+  const years = [...new Set([String(new Date().getFullYear()), ...readAll.map((e) => (e.finished_at || '').slice(0, 4)).filter(Boolean)])].sort().reverse();
+  if (!years.includes(statsYear)) statsYear = years[0];
+
+  $('#statsYears').innerHTML = years.map((y) => `<button type="button" class="chip all" data-year="${y}" aria-pressed="${y === statsYear}">${y}</button>`).join('');
+  $('#statsPeople').hidden = ms.length < 2;
+  $('#statsPeople').innerHTML = `<button type="button" class="chip all" data-swho="all" aria-pressed="${statsWho === 'all'}">Familjen</button>` +
+    ms.map((m) => `<button type="button" class="chip" data-swho="${esc(m.id)}" aria-pressed="${statsWho === m.id}">${avatar(m)}${esc(m.name)}</button>`).join('');
+
+  const read = readAll.filter((e) => (e.finished_at || '').startsWith(statsYear));
+  const undated = readAll.filter((e) => !e.finished_at).length;
+  const who1 = statsWho === 'all' ? 'Familjen har' : (statsWho === me ? 'Du har' : `${db.members[statsWho]?.name} har`);
+  const body = $('#statsBody');
+  if (!read.length) {
+    body.innerHTML = `<div class="empty"><div class="big">📊</div><p>${esc(who1)} inte läst ut någon bok ${statsYear} ännu.</p>
+      ${undated ? `<p class="muted">${undated} lästa böcker saknar datum – sätt datum under Redigera så räknas de med.</p>` : ''}</div>`;
+    return;
+  }
+  const bookOf = (e) => db.books[e.book_id];
+  const pages = read.reduce((sum, e) => sum + (bookOf(e).pages || 0), 0);
+  const audio = read.filter((e) => e.audio).length;
+  const rated = read.filter((e) => e.rating);
+  const avg = rated.length ? rated.reduce((s, e) => s + e.rating, 0) / rated.length : null;
+  const uniq = new Set(read.map((e) => e.book_id)).size;
+
+  // Per månad
+  const perMonth = MONTHS.map(() => 0);
+  for (const e of read) perMonth[+e.finished_at.slice(5, 7) - 1]++;
+  const maxM = Math.max(...perMonth);
+  const isThisYear = statsYear === String(new Date().getFullYear());
+  const monthsSoFar = isThisYear ? new Date().getMonth() + 1 : 12;
+
+  // Genre, stämning, författare
+  const count = (arr) => { const m = new Map(); for (const k of arr) m.set(k, (m.get(k) || 0) + 1); return [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'sv')); };
+  const genres = count(read.flatMap((e) => bookOf(e).genres || []));
+  const noGenre = read.filter((e) => !(bookOf(e).genres || []).length).length;
+  const moods = count(read.flatMap((e) => (bookOf(e).moods || []).map(moodSv)));
+  const authors = count(read.map((e) => (bookOf(e).authors || '').split(',')[0].trim()).filter(Boolean)).filter(([, n]) => n > 1).slice(0, 5);
+  const withPages = read.filter((e) => bookOf(e).pages).sort((a, b) => bookOf(b).pages - bookOf(a).pages);
+  const favorite = [...rated].sort((a, b) => b.rating - a.rating || (b.finished_at || '').localeCompare(a.finished_at || ''))[0];
+
+  const tile = (value, label, sub = '') => `<div class="tile"><div class="tile-v">${value}</div><div class="tile-l">${label}</div>${sub ? `<div class="tile-s">${sub}</div>` : ''}</div>`;
+  const fmt = (n) => n.toLocaleString('sv-SE');
+  const bookLine = (e, extra) => { const b = bookOf(e); return `<button type="button" class="hl" data-book="${esc(b.id)}">${coverHtml(b)}<span><b>${esc(b.title)}</b><br><span class="muted">${esc(b.authors || '')}${extra ? ' · ' + extra : ''}</span></span></button>`; };
+
+  let html = `<section class="hero">
+      <div class="hero-n">${read.length}</div>
+      <div class="hero-t">${read.length === 1 ? 'bok läst' : 'böcker lästa'} ${statsYear}</div>
+      <div class="hero-s">${esc(who1)} läst ${fmt(pages)} sidor${statsWho === 'all' && uniq !== read.length ? ` · ${uniq} olika titlar` : ''}</div>
+    </section>
+    <div class="tiles">
+      ${tile(fmt(pages), 'sidor', withPages.length < read.length ? `${read.length - withPages.length} utan sidantal` : '')}
+      ${tile((read.length / monthsSoFar).toLocaleString('sv-SE', { maximumFractionDigits: 1 }), 'böcker/månad')}
+      ${tile(avg ? avg.toLocaleString('sv-SE', { maximumFractionDigits: 1 }) + ' ★' : '–', 'snittbetyg', rated.length ? `${rated.length} betygsatta` : '')}
+      ${tile(audio, 'ljudböcker', `${read.length - audio} lästa`)}
+    </div>
+
+    <section class="card-s"><h3>Per månad</h3>
+      <div class="months" role="img" aria-label="Lästa böcker per månad ${statsYear}">
+        ${perMonth.map((n, i) => `<div class="m-col" data-tip="${MONTHS[i]}: ${n} ${n === 1 ? 'bok' : 'böcker'}">
+          <span class="m-val">${n && n === maxM ? n : ''}</span>
+          <span class="m-bar" style="height:${maxM ? (n / maxM) * 100 : 0}%"></span>
+          <span class="m-lab">${MONTHS[i][0].toUpperCase()}</span></div>`).join('')}
+      </div>
+      <table class="sr-only"><caption>Lästa böcker per månad</caption><tr>${MONTHS.map((m) => `<th>${m}</th>`).join('')}</tr><tr>${perMonth.map((n) => `<td>${n}</td>`).join('')}</tr></table>
+    </section>`;
+
+  if (genres.length) {
+    const maxG = genres[0][1];
+    html += `<section class="card-s"><h3>Genrer</h3><div class="hbars">
+      ${genres.slice(0, 8).map(([g, n]) => `<div class="hb" data-tip="${esc(g)}: ${n} ${n === 1 ? 'bok' : 'böcker'}">
+        <span class="hb-l">${esc(g)}</span><span class="hb-track"><span class="hb-bar" style="width:${(n / maxG) * 100}%"></span></span><span class="hb-n">${n}</span></div>`).join('')}
+      </div>${noGenre ? `<p class="muted small">${noGenre} ${noGenre === 1 ? 'bok' : 'böcker'} saknar genre – lägg till under Redigera.</p>` : ''}</section>`;
+  }
+  if (moods.length) {
+    html += `<section class="card-s"><h3>Stämning</h3><div class="mood-cloud">
+      ${moods.map(([m, n]) => `<span class="mood">${esc(m)} <b>${n}</b></span>`).join('')}</div></section>`;
+  }
+  const hl = [];
+  if (favorite) hl.push(`<div><h4>Högst betyg</h4>${bookLine(favorite, starStr(favorite.rating))}</div>`);
+  if (withPages.length) hl.push(`<div><h4>Längsta</h4>${bookLine(withPages[0], `${withPages[0] && bookOf(withPages[0]).pages} sidor`)}</div>`);
+  if (withPages.length > 1) { const s = withPages[withPages.length - 1]; hl.push(`<div><h4>Kortaste</h4>${bookLine(s, `${bookOf(s).pages} sidor`)}</div>`); }
+  if (hl.length) html += `<section class="card-s highlights">${hl.join('')}</section>`;
+  if (authors.length) {
+    html += `<section class="card-s"><h3>Favoritförfattare</h3><ol class="authors">${authors.map(([a, n]) => `<li><span>${esc(a)}</span><span class="muted">${n} böcker</span></li>`).join('')}</ol></section>`;
+  }
+  if (statsWho === 'all' && ms.length > 1) {
+    const per = ms.map((m) => [m, read.filter((e) => e.member_id === m.id)]).sort((a, b) => b[1].length - a[1].length);
+    const maxP = Math.max(1, ...per.map(([, l]) => l.length));
+    html += `<section class="card-s"><h3>Familjen</h3><div class="hbars">
+      ${per.map(([m, l]) => `<div class="hb" data-tip="${esc(m.name)}: ${l.length} böcker, ${fmt(l.reduce((s, e) => s + (bookOf(e).pages || 0), 0))} sidor">
+        <span class="hb-l">${avatar(m, 'avatar sm')} ${esc(m.name)}</span><span class="hb-track"><span class="hb-bar" style="width:${(l.length / maxP) * 100}%"></span></span><span class="hb-n">${l.length}</span></div>`).join('')}
+      </div></section>`;
+  }
+  const sorted = [...read].sort((a, b) => (b.finished_at || '').localeCompare(a.finished_at || ''));
+  html += `<section class="card-s"><h3>Alla lästa ${statsYear}</h3><div class="cover-grid">
+    ${sorted.map((e) => `<button type="button" class="cg" data-book="${esc(e.book_id)}" title="${esc(bookOf(e).title)}">${coverHtml(bookOf(e))}${e.audio ? '<span class="cg-a">🎧</span>' : ''}</button>`).join('')}
+    </div></section>`;
+  if (undated) html += `<p class="muted small center">${undated === 1 ? '1 läst bok saknar' : `${undated} lästa böcker saknar`} datum och räknas inte in här – sätt datum under Redigera.</p>`;
+  body.innerHTML = html;
+}
+
+// Tooltip för diagrammen (mus och tryck)
+function showTip(el, x, y) {
+  const tip = $('#vizTip');
+  tip.textContent = el.dataset.tip;
+  tip.hidden = false;
+  const r = tip.getBoundingClientRect();
+  tip.style.left = `${Math.max(8, Math.min(window.innerWidth - r.width - 8, x - r.width / 2))}px`;
+  tip.style.top = `${Math.max(8, y - r.height - 12)}px`;
+}
+$('#statsView').addEventListener('pointerover', (e) => {
+  const el = e.target.closest('[data-tip]');
+  if (el) showTip(el, e.clientX, e.clientY); else $('#vizTip').hidden = true;
+});
+$('#statsView').addEventListener('pointermove', (e) => {
+  const el = e.target.closest('[data-tip]');
+  if (el && !$('#vizTip').hidden) showTip(el, e.clientX, e.clientY);
+});
+$('#statsView').addEventListener('scroll', () => { $('#vizTip').hidden = true; });
+$('#statsView').addEventListener('click', (e) => {
+  const y = e.target.closest('[data-year]');
+  if (y) { statsYear = y.dataset.year; renderStats(); return; }
+  const w = e.target.closest('[data-swho]');
+  if (w) { statsWho = w.dataset.swho; renderStats(); return; }
+  const b = e.target.closest('[data-book]');
+  if (b) { openBook(b.dataset.book); return; }
+  const tipEl = e.target.closest('[data-tip]');
+  if (tipEl) showTip(tipEl, e.clientX, e.clientY);
+});
+$('#statsBtn').addEventListener('click', openStats);
+$('#statsClose').addEventListener('click', closeStats);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#statsView').hidden && !document.querySelector('dialog[open]')) closeStats(); });
 
 // ---------- Start ----------
 (async function start() {
@@ -1850,8 +2273,10 @@ $('#spineColor').addEventListener('input', (e) => {
     await onSession(data.session);
     sb.auth.onAuthStateChange((_event, s) => { setTimeout(() => onSession(s), 0); });
   }
+  if (authLinkError) toast(/expired|invalid/i.test(authLinkError) ? 'Länken har gått ut – be om en ny under ⋯ → Glömt lösenord?' : authLinkError);
   if (!me || !db.members[me]) openWho();
   else migrateV1();
   fileKeys().then((keys) => { localEpubs = new Set(keys); render(); }).catch(() => {});
   setTimeout(autoCovers, 1500);
+  setTimeout(autoMeta, 4000);
 })();

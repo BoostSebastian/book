@@ -187,6 +187,10 @@ function card(b) {
     body = whoRows([...byStatus('reading'), ...byStatus('read')], b);
   } else if (currentTab === 'read') {
     body = whoRows(byStatus('read'), b);
+  }
+  if (currentTab === 'reading' || currentTab === 'read') {
+    if (b.owned) body += '<div class="tags"><span class="tag">📚 I hyllan</span></div>';
+    else quick.push(['own', '📚 Till hyllan']);
   } else if (currentTab === 'wishlist') {
     body = names('Önskas av', byStatus('wishlist'));
     quick.push(['buy', '✓ Köpt']);
@@ -251,6 +255,10 @@ function renderHeader() {
 function quickAction(bookId, action) {
   const b = db.books[bookId];
   if (!b) return;
+  if (action === 'own') {
+    put('books', { ...b, owned: true });
+    toast(`”${b.title}” ställd i bokhyllan 📚`);
+  }
   if (action === 'buy') {
     put('books', { ...b, owned: true });
     for (const e of entriesOf(bookId)) if (e.status === 'wishlist') del('entries', e.id);
@@ -516,6 +524,10 @@ function addBook(data, to, memberId) {
     put('books', book);
   }
   const name = db.members[memberId]?.name;
+  if (to === 'reading' && $('#addOwned').checked && !book.owned) {
+    book = { ...book, owned: true };
+    put('books', book);
+  }
   if (to === 'shelf') {
     if (!book.owned) put('books', { ...book, owned: true });
     toast(`”${book.title}” ställd i bokhyllan`);
@@ -943,6 +955,7 @@ $('#addBtn').addEventListener('click', () => {
   $('#addFor').innerHTML = members().map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join('');
   $('#addFor').value = target();
   $('#addFor').closest('label').hidden = members().length < 2;
+  $('#addOwned').checked = localStorage.getItem('mina-bocker:add-owned') === '1';
   $('#addDialog').showModal();
   $('#q').focus();
 });
@@ -960,11 +973,12 @@ $('#results').addEventListener('click', (e) => {
   addBook(lastResults[+btn.dataset.i], btn.dataset.to, $('#addFor').value || me);
   $('#addDialog').close();
 });
+$('#addOwned').addEventListener('change', (e) => localStorage.setItem('mina-bocker:add-owned', e.target.checked ? '1' : '0'));
 $('#manualBtn').addEventListener('click', () => {
   const q = $('#q').value.trim();
   const forId = $('#addFor').value || me;
   $('#addDialog').close();
-  openEdit(null, forId, normIsbn(q) ? { isbn: q } : { title: q });
+  openEdit(null, forId, { ...(normIsbn(q) ? { isbn: q } : { title: q }), ...($('#addOwned').checked ? { owned: true } : {}) });
 });
 if ('BarcodeDetector' in window && navigator.mediaDevices?.getUserMedia) {
   $('#scanBtn').hidden = false;
@@ -1336,6 +1350,7 @@ function openBook(id) {
   acts.push(localEpubs.has(id)
     ? '<button type="button" class="link-btn" data-bv="rmepub">Ta bort epub</button>'
     : '<button type="button" class="btn" data-bv="epub">＋ Epub</button>');
+  if (!b.owned) acts.push('<button type="button" class="btn" data-bv="own">📚 Till hyllan</button>');
   acts.push('<button type="button" class="btn" data-bv="edit">✎ Redigera</button>');
   $('#bvActions').innerHTML = acts.join('');
   if (!$('#bookDialog').open) $('#bookDialog').showModal();
@@ -1630,6 +1645,7 @@ $('#bookDialog').addEventListener('click', async (e) => {
     toast('Bokryggen sparad');
   });
   if (a === 'start') quickAction(id, 'start');
+  if (a === 'own') quickAction(id, 'own');
   if (a === 'progress') openProgress(entryId(id, target()));
   if (a === 'epub') $('#bvEpubFile').click();
   if (a === 'edit') { $('#bookDialog').close(); openEdit(id); }

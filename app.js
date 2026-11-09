@@ -89,9 +89,18 @@ function avatar(m, cls = 'avatar') {
   return `<span class="${cls}" style="background:${esc(m.color || '#888')}" aria-hidden="true">${esc((m.name || '?')[0].toUpperCase())}</span>`;
 }
 function coverHtml(b, cls = 'cover') {
-  if (b.cover) return `<img class="${cls}" src="${esc(b.cover)}" alt="" loading="lazy" referrerpolicy="no-referrer">`;
-  return `<div class="${cls}" aria-hidden="true">${esc((b.title || '?')[0].toUpperCase())}</div>`;
+  const src = coverSrc(b);
+  if (!src) return placeholderHtml(b, cls);
+  return `<img class="${cls}" src="${esc(src)}" alt="" loading="lazy" referrerpolicy="no-referrer"
+    data-t="${esc(b.title)}" data-a="${esc(b.authors)}" onerror="coverFail(this)" onload="coverLoad(this)">`;
 }
+// Saknas omslag: ett genererat "bokomslag" med titel och författare.
+function placeholderHtml(b, cls = 'cover') {
+  return `<div class="${cls} ph" style="--ph:${hashColor(b.title || '')}" aria-hidden="true">
+    <span class="ph-t">${esc(b.title || '?')}</span><span class="ph-a">${esc((b.authors || '').split(',')[0])}</span></div>`;
+}
+window.coverFail = (img) => { img.outerHTML = placeholderHtml({ title: img.dataset.t, authors: img.dataset.a }, img.className); };
+window.coverLoad = (img) => { if (img.naturalWidth < 5) window.coverFail(img); };
 function shortDate(d) {
   if (!d) return '';
   const dt = new Date(d + 'T12:00:00');
@@ -130,6 +139,10 @@ function render() {
 
   renderPeople();
   renderHeader();
+  if ($('#bookDialog').open) { if (db.books[viewBookId]) openBook(viewBookId); else $('#bookDialog').close(); }
+  const vt = $('#viewToggle');
+  vt.hidden = currentTab !== 'shelf';
+  vt.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.view === shelfView)));
 
   const q = $('#filter').value.trim().toLowerCase();
   let list = booksForTab(currentTab);
@@ -151,6 +164,11 @@ function render() {
     }[currentTab];
     el.innerHTML = `<div class="empty"><div class="big">📚</div><p>${q ? 'Inga träffar.' : esc(empty)}</p>
       ${q ? '' : '<p>Tryck på <b>＋</b> för att lägga till en bok.</p>'}</div>`;
+    return;
+  }
+  if (currentTab === 'shelf' && shelfView === 'spines') {
+    el.innerHTML = `<div class="bookcase">${list.map((b) => `<div class="slot">${spine(b)}</div>`).join('')}</div>`;
+    extractSpineColors(list);
     return;
   }
   el.innerHTML = list.map(card).join('');
@@ -196,7 +214,8 @@ function names(label, es) {
 
 function whoRows(es, b) {
   if (!es.length) return '';
-  es.sort((x, y) => (x.status === y.status ? (pct(y, b) ?? y.page ?? 0) - (pct(x, b) ?? x.page ?? 0) : x.status === 'reading' ? -1 : 1));
+  const rank = { reading: 0, read: 1, wishlist: 2 };
+  es.sort((x, y) => (x.status === y.status ? (pct(y, b) ?? y.page ?? 0) - (pct(x, b) ?? x.page ?? 0) : rank[x.status] - rank[y.status]));
   return `<div class="who-row">${es.map((e) => {
     const m = db.members[e.member_id];
     const label = `${avatar(m, 'avatar sm')}<span class="name">${esc(m.name)}</span>`;
@@ -206,6 +225,7 @@ function whoRows(es, b) {
       return `<button type="button" class="who-line" data-progress="${esc(e.id)}" aria-label="Uppdatera hur långt ${esc(m.name)} kommit">
         ${label}<span class="bar"><i style="width:${p ?? 0}%;background:${esc(m.color)}"></i></span><span class="pg">${pg}</span></button>`;
     }
+    if (e.status === 'wishlist') return `<div class="who-line">${label}<span class="grow">Önskar sig boken</span></div>`;
     return `<div class="who-line">${label}<span class="grow">${e.rating ? `<span class="rating">${starStr(e.rating)}</span>` : '✓ Läst'}</span><span class="pg">${esc(shortDate(e.finished_at))}</span></div>`;
   }).join('')}</div>`;
 }
@@ -312,9 +332,9 @@ function openEdit(bookId, memberId = target(), prefill = {}) {
   f.isbn.value = d.isbn || '';
   f.pages.value = d.pages ?? '';
   f.owned.checked = !!d.owned;
-  const img = $('#editCover');
-  img.hidden = !d.cover;
-  if (d.cover) img.src = d.cover;
+  editCover = d.cover || '';
+  $('#coverPicker').hidden = true;
+  renderEditCover();
   $('#deleteBtn').hidden = !b;
 
   drafts = {};
@@ -378,6 +398,7 @@ function saveEdit() {
     isbn: f.isbn.value.trim(),
     pages: int(f.pages.value),
     owned: f.owned.checked,
+    cover: editCover,
   };
   if (!prev || COLUMNS.books.some((c) => c !== 'updated_at' && book[c] !== prev[c])) put('books', book);
 
@@ -425,7 +446,7 @@ async function searchGoogle(q) {
       year: (v.publishedDate || '').slice(0, 4),
       isbn: ids.find((i) => i.type === 'ISBN_13')?.identifier || ids.find((i) => i.type === 'ISBN_10')?.identifier || '',
       pages: v.pageCount || null,
-      cover: img.replace(/^http:/, 'https:'),
+      cover: googleImg(img),
     };
   });
 }
@@ -688,6 +709,7 @@ async function pull() {
   db = fresh;
   saveJSON(DB_KEY, db);
   render();
+  setTimeout(autoCovers, 1000);
   if (me && !db.members[me] && members().length) openWho(); // min profil togs bort på en annan enhet
 }
 
@@ -860,14 +882,16 @@ $('#filter').addEventListener('input', render);
 $('#list').addEventListener('click', (e) => {
   const prog = e.target.closest('[data-progress]');
   if (prog) { openProgress(prog.dataset.progress); return; }
+  const sp = e.target.closest('.spine');
+  if (sp) { openBook(sp.dataset.id); return; }
   const card = e.target.closest('.card');
   if (!card) return;
   const action = e.target.closest('button[data-action]');
   if (action) quickAction(card.dataset.id, action.dataset.action);
-  else openEdit(card.dataset.id);
+  else openBook(card.dataset.id);
 });
 $('#list').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && e.target.classList.contains('card')) openEdit(e.target.dataset.id);
+  if (e.key === 'Enter' && e.target.classList.contains('card')) openBook(e.target.dataset.id);
 });
 
 // Lägg till
@@ -931,8 +955,11 @@ $('#deleteBtn').addEventListener('click', () => {
   const b = db.books[editBookId];
   if (!b || !confirm(`Ta bort ”${b.title}” för hela familjen?`)) return;
   deleteBook(b.id);
+  fileDel(b.id).catch(() => {});
+  localEpubs.delete(b.id);
   commit();
   $('#editDialog').close();
+  $('#bookDialog').close();
   toast('Boken borttagen');
 });
 
@@ -1043,6 +1070,551 @@ setInterval(() => { if (document.visibilityState === 'visible') sync(); }, 12000
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 
+// ---------- Omslag ----------
+const COVER_TRIED_KEY = 'mina-bocker:cover-tried';
+const SPINE_PALETTE = ['#7a4b2a', '#2f4f6f', '#6b2f3a', '#3f5f3a', '#8a6d3b', '#4a3f6b', '#2f5f5f', '#8f4a2f', '#4f4f55', '#1f3f5f', '#6f2f5f', '#5a4a2a'];
+
+function hashStr(s) {
+  let h = 0;
+  for (const c of String(s)) h = (h * 31 + c.codePointAt(0)) | 0;
+  return Math.abs(h);
+}
+const hashColor = (s) => SPINE_PALETTE[hashStr(s) % SPINE_PALETTE.length];
+const googleImg = (u) => (u ? u.replace(/^http:/, 'https:').replace('&edge=curl', '').replace(/zoom=\d/, 'zoom=1') : '');
+
+// Eget omslag om det finns, annars Open Librarys omslag via ISBN (404 → genererat omslag).
+function coverSrc(b) {
+  if (b.cover) return b.cover;
+  const isbn = normIsbn(b.isbn || '');
+  return isbn ? `https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg?default=false` : '';
+}
+
+async function coverCandidates(b) {
+  const out = [];
+  const add = (u) => { if (u && !out.includes(u)) out.push(u); };
+  const isbn = normIsbn(b.isbn || '');
+  const author = (b.authors || '').split(',')[0].trim();
+  if (isbn) add(`https://covers.openlibrary.org/b/isbn/${isbn}-M.jpg?default=false`);
+  const queries = [];
+  if (isbn) queries.push(`isbn:${isbn}`);
+  if (b.title) queries.push(`intitle:${b.title}${author ? ` inauthor:${author}` : ''}`);
+  for (const q of queries) {
+    try {
+      const r = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(q)}&maxResults=12`);
+      if (r.ok) for (const it of (await r.json()).items || []) {
+        const l = it.volumeInfo?.imageLinks;
+        add(googleImg(l?.thumbnail || l?.smallThumbnail));
+      }
+    } catch { /* nästa källa */ }
+  }
+  if (b.title) {
+    try {
+      const r = await fetch(`https://openlibrary.org/search.json?title=${encodeURIComponent(b.title)}${author ? `&author=${encodeURIComponent(author)}` : ''}&limit=10&fields=cover_i`);
+      if (r.ok) for (const d of (await r.json()).docs || []) if (d.cover_i) add(`https://covers.openlibrary.org/b/id/${d.cover_i}-M.jpg`);
+    } catch { /* ingen träff */ }
+  }
+  return out;
+}
+
+// Hämta omslag i bakgrunden till böcker som saknar (t.ex. manuellt tillagda eller från första versionen).
+let autoCoversRunning = false;
+async function autoCovers() {
+  if (autoCoversRunning || !navigator.onLine) return;
+  autoCoversRunning = true;
+  try {
+    const tried = new Set(loadJSON(COVER_TRIED_KEY, []));
+    const todo = Object.values(db.books).filter((b) => !b.cover && !tried.has(b.id)).slice(0, 10);
+    for (const b of todo) {
+      const found = (await coverCandidates(b)).filter((u) => !u.includes('/b/isbn/'));
+      if (!navigator.onLine) break;
+      tried.add(b.id);
+      saveJSON(COVER_TRIED_KEY, [...tried]);
+      const cur = db.books[b.id];
+      if (found[0] && cur && !cur.cover) { put('books', { ...cur, cover: found[0] }); commit(); }
+    }
+  } finally {
+    autoCoversRunning = false;
+  }
+}
+
+async function resizeImage(blob, maxW = 320, maxH = 480) {
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = new Image();
+    img.src = url;
+    await img.decode();
+    const k = Math.min(1, maxW / img.naturalWidth, maxH / img.naturalHeight);
+    const c = document.createElement('canvas');
+    c.width = Math.round(img.naturalWidth * k);
+    c.height = Math.round(img.naturalHeight * k);
+    c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL('image/jpeg', 0.78);
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+// Omslagsväljaren i redigeringsdialogen
+let editCover = '';
+function renderEditCover() {
+  const f = $('#editForm').elements;
+  $('#editCover').innerHTML = coverHtml({ title: f.title.value || '?', authors: f.authors.value, isbn: f.isbn.value, cover: editCover }, 'cover big');
+}
+async function openCoverPicker() {
+  const el = $('#coverPicker');
+  if (!el.hidden) { el.hidden = true; return; }
+  el.hidden = false;
+  el.innerHTML = '<p class="muted">Letar omslag…</p>';
+  const f = $('#editForm').elements;
+  const list = await coverCandidates({ title: f.title.value.trim(), authors: f.authors.value.trim(), isbn: f.isbn.value.trim() });
+  el.innerHTML = `<div class="cp-grid">
+    ${list.map((u) => `<button type="button" class="cp-item" data-cover="${esc(u)}"><img src="${esc(u)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.parentNode.remove()" onload="if(this.naturalWidth<5)this.parentNode.remove()"></button>`).join('')}
+    <button type="button" class="cp-item cp-own" data-own>📷<br>Egen bild</button>
+    <button type="button" class="cp-item cp-own" data-cover="">✕<br>Inget</button>
+  </div>${list.length ? '<p class="muted">Välj ett omslag, eller ta en bild på din egen bok.</p>' : '<p class="muted">Hittade inga omslag – ta en bild på boken!</p>'}`;
+}
+
+// ---------- Bokhyllan ----------
+const SHELF_VIEW_KEY = 'mina-bocker:shelf-view';
+const SPINE_KEY = 'mina-bocker:spine-colors';
+let shelfView = localStorage.getItem(SHELF_VIEW_KEY) || 'spines';
+let spineCache = loadJSON(SPINE_KEY, {});
+
+function isLight(color) {
+  let r, g, b;
+  const m = color.match(/rgb\((\d+),\s*(\d+),\s*(\d+)/);
+  if (m) [r, g, b] = m.slice(1).map(Number);
+  else if (/^#[0-9a-f]{6}$/i.test(color)) [r, g, b] = [1, 3, 5].map((i) => parseInt(color.slice(i, i + 2), 16));
+  else return false;
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.62;
+}
+function spineColor(b) {
+  const c = spineCache[b.id];
+  return c && c.src === coverSrc(b) && c.color ? c.color : hashColor(b.title);
+}
+function spine(b) {
+  const w = Math.max(24, Math.min(58, Math.round((b.pages || 280) / 9)));
+  const h = 148 + (hashStr(b.id) % 36);
+  const color = spineColor(b);
+  const author = (b.authors || '').split(',')[0].trim().split(/\s+/).pop();
+  const readers = entriesOf(b.id).filter((e) => e.status === 'reading').map((e) => db.members[e.member_id]);
+  return `<button type="button" class="spine${isLight(color) ? ' light' : ''}" data-id="${esc(b.id)}"
+      style="--w:${w}px;--h:${h}px;--sc:${esc(color)}" title="${esc(b.title)}${b.authors ? ' – ' + esc(b.authors) : ''}">
+    <span class="sp-title">${esc(b.title)}</span>
+    ${author ? `<span class="sp-author">${esc(author)}</span>` : ''}
+    ${readers.length ? `<span class="sp-marks">${readers.map((m) => `<i style="background:${esc(m.color)}" title="${esc(m.name)} läser"></i>`).join('')}</span>` : ''}
+    ${localEpubs.has(b.id) ? '<span class="sp-e" title="E-bok på den här enheten">e</span>' : ''}
+  </button>`;
+}
+// Bokryggens färg hämtas från omslaget (när bildservern tillåter det), annars en färg från titeln.
+function extractSpineColors(list) {
+  for (const b of list) {
+    const src = coverSrc(b);
+    const cached = spineCache[b.id];
+    if (!src || (cached && cached.src === src)) continue;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.referrerPolicy = 'no-referrer';
+    const done = (color) => {
+      spineCache[b.id] = { src, color };
+      saveJSON(SPINE_KEY, spineCache);
+      if (!color) return;
+      document.querySelectorAll('.spine').forEach((el) => {
+        if (el.dataset.id !== b.id) return;
+        el.style.setProperty('--sc', color);
+        el.classList.toggle('light', isLight(color));
+      });
+    };
+    img.onload = () => {
+      try {
+        if (img.naturalWidth < 5) return done(null);
+        const n = 16;
+        const c = document.createElement('canvas');
+        c.width = c.height = n;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0, n, n);
+        const d = ctx.getImageData(0, 0, n, n).data;
+        let r = 0, g = 0, bl = 0, wsum = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          const mx = Math.max(d[i], d[i + 1], d[i + 2]), mn = Math.min(d[i], d[i + 1], d[i + 2]);
+          const w = 0.15 + (mx - mn) / 255; // mättade färger väger tyngre
+          r += d[i] * w; g += d[i + 1] * w; bl += d[i + 2] * w; wsum += w;
+        }
+        done(`rgb(${Math.round(r / wsum)}, ${Math.round(g / wsum)}, ${Math.round(bl / wsum)})`);
+      } catch { done(null); }
+    };
+    img.onerror = () => done(null);
+    img.src = src;
+  }
+}
+
+// ---------- Bokvy ----------
+let viewBookId = null;
+function openBook(id) {
+  const b = db.books[id];
+  if (!b) return;
+  viewBookId = id;
+  $('#bvCover').innerHTML = coverHtml(b, 'cover huge');
+  $('#bvTitle').textContent = b.title;
+  $('#bvAuthor').textContent = b.authors || '';
+  $('#bvMeta').textContent = [b.year, b.pages ? `${b.pages} sidor` : '', b.isbn ? `ISBN ${b.isbn}` : ''].filter(Boolean).join(' · ');
+  const tags = [];
+  if (b.owned) tags.push('I bokhyllan');
+  if (localEpubs.has(id)) tags.push('E-bok på den här enheten');
+  $('#bvTags').innerHTML = tags.map((t) => `<span class="tag">${t}</span>`).join('');
+  const es = entriesOf(id);
+  $('#bvFamily').innerHTML = es.length ? `<h3>Familjen</h3>${whoRows(es, b)}` : '';
+  $('#bvNotes').innerHTML = es.filter((e) => e.notes).map((e) =>
+    `<p class="note"><b>${esc(db.members[e.member_id].name)}:</b> ${esc(e.notes)}</p>`).join('');
+  const t = target();
+  const mine = t && db.entries[entryId(id, t)];
+  const forName = t && t !== me ? ` (${esc(db.members[t].name)})` : '';
+  const acts = [];
+  if (localEpubs.has(id)) acts.push('<button type="button" class="btn primary" data-bv="read">📖 Läs</button>');
+  if (t && mine?.status !== 'reading') acts.push(`<button type="button" class="btn" data-bv="start">▶ Börja läsa${forName}</button>`);
+  if (mine?.status === 'reading') acts.push(`<button type="button" class="btn" data-bv="progress">Hur långt?${forName}</button>`);
+  acts.push('<span class="spacer"></span>');
+  acts.push(localEpubs.has(id)
+    ? '<button type="button" class="link-btn" data-bv="rmepub">Ta bort epub</button>'
+    : '<button type="button" class="btn" data-bv="epub">＋ Epub</button>');
+  acts.push('<button type="button" class="btn" data-bv="edit">✎ Redigera</button>');
+  $('#bvActions').innerHTML = acts.join('');
+  if (!$('#bookDialog').open) $('#bookDialog').showModal();
+}
+
+// ---------- Epub-filer (sparas lokalt per enhet i IndexedDB) ----------
+let localEpubs = new Set();
+let idbPromise = null;
+function idb() {
+  return idbPromise ||= new Promise((res, rej) => {
+    const r = indexedDB.open('mina-bocker-filer', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('epubs', { keyPath: 'bookId' });
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => { idbPromise = null; rej(r.error); };
+  });
+}
+async function idbReq(mode, fn) {
+  const d = await idb();
+  return new Promise((res, rej) => {
+    const tx = d.transaction('epubs', mode);
+    const r = fn(tx.objectStore('epubs'));
+    tx.oncomplete = () => res(r?.result);
+    tx.onerror = () => rej(tx.error);
+    tx.onabort = () => rej(tx.error);
+  });
+}
+const fileGet = (id) => idbReq('readonly', (st) => st.get(id));
+const filePut = (rec) => idbReq('readwrite', (st) => st.put(rec));
+const fileDel = (id) => idbReq('readwrite', (st) => st.delete(id));
+const fileKeys = () => idbReq('readonly', (st) => st.getAllKeys());
+
+const scripts = {};
+function loadScript(src) {
+  return scripts[src] ||= new Promise((res, rej) => {
+    const el = document.createElement('script');
+    el.src = src;
+    el.onload = res;
+    el.onerror = () => { delete scripts[src]; rej(new Error('Kunde inte ladda läsaren')); };
+    document.head.append(el);
+  });
+}
+async function ensureEpub() {
+  await loadScript('vendor/jszip-3.10.1.min.js');
+  await loadScript('vendor/epub-0.3.93.min.js');
+}
+
+function epubIsbn(identifier) {
+  const raw = String(identifier || '');
+  const digits = raw.replace(/^urn:isbn:/i, '').replace(/[\s-]/g, '');
+  return /isbn/i.test(raw) || /^(97[89])?\d{9}[\dX]$/i.test(digits) ? normIsbn(digits) || '' : '';
+}
+
+async function importEpubs(files, attachTo = null) {
+  files = [...files];
+  if (!files.length) return null;
+  try { await ensureEpub(); } catch (e) { toast(e.message); return null; }
+  navigator.storage?.persist?.().catch(() => {});
+  let ok = 0, lastId = null;
+  for (const file of files) {
+    try {
+      toast(`Läser in ${file.name}…`);
+      const data = await file.arrayBuffer();
+      const ep = window.ePub(data.slice(0));
+      await ep.ready;
+      const meta = ep.packaging?.metadata || {};
+      let cover = '';
+      try {
+        const url = await ep.coverUrl();
+        if (url) cover = await resizeImage(await (await fetch(url)).blob());
+      } catch { /* ingen omslagsbild */ }
+      ep.destroy();
+      const title = (meta.title || file.name.replace(/\.epub$/i, '')).trim();
+      const authors = (meta.creator || '').trim();
+      const isbn = epubIsbn(meta.identifier);
+      let book = attachTo ? db.books[attachTo] : findDuplicate({ title, authors, isbn });
+      if (!book) {
+        book = { id: uid(), title, authors, year: (meta.pubdate || '').slice(0, 4), isbn, cover, pages: null, owned: true, added_at: today() };
+        put('books', book);
+      } else if (!book.cover && cover) {
+        book = { ...book, cover };
+        put('books', book);
+      }
+      await filePut({ bookId: book.id, name: file.name, size: file.size, data, added_at: today() });
+      localEpubs.add(book.id);
+      ok++;
+      lastId = book.id;
+    } catch (err) {
+      console.warn(err);
+      toast(`Kunde inte läsa ${file.name}`);
+    }
+  }
+  commit();
+  if (ok) toast(ok === 1 ? 'Epub tillagd – tryck på Läs för att börja' : `${ok} epub-filer tillagda`);
+  return lastId;
+}
+
+// ---------- Läsaren ----------
+const READER_KEY = 'mina-bocker:reader';
+const THEMES = {
+  light: { bg: '#ffffff', fg: '#222222' },
+  sepia: { bg: '#f4ecd8', fg: '#3b2f22' },
+  dark: { bg: '#1c1916', fg: '#e6ddd2' },
+};
+let rd = null;
+let rdSaveTimer = null;
+
+async function openReader(bookId) {
+  const rec = await fileGet(bookId).catch(() => null);
+  if (!rec) { toast('Epub-filen finns inte på den här enheten'); return; }
+  try { await ensureEpub(); } catch (e) { toast(e.message); return; }
+  if (rd) closeReader();
+  $('#bookDialog').close();
+  const b = db.books[bookId];
+  const prefs = loadJSON(READER_KEY, { size: 100, theme: matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light' });
+  $('#reader').hidden = false;
+  document.body.classList.add('reading-mode');
+  $('#rdTitle').textContent = b?.title || rec.name;
+  $('#rdPct').textContent = '';
+  $('#rdChapter').textContent = '';
+  $('#rdFinish').hidden = true;
+  $('#rdToc').hidden = true;
+  $('#rdView').innerHTML = '';
+
+  const book = window.ePub(rec.data.slice(0));
+  const rendition = book.renderTo('rdView', { width: '100%', height: '100%', flow: 'paginated', spread: 'auto', minSpreadWidth: 900 });
+  rd = { book, rendition, bookId, prefs, pct: null, toc: [] };
+  for (const [k, t] of Object.entries(THEMES)) {
+    rendition.themes.register(k, { body: { background: `${t.bg} !important`, color: `${t.fg} !important` }, a: { color: 'inherit !important' } });
+  }
+  applyReaderPrefs();
+  rendition.hooks.content.register((contents) => {
+    const d = contents.document;
+    let x0 = null, y0 = null;
+    d.addEventListener('touchstart', (e) => { x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; }, { passive: true });
+    d.addEventListener('touchend', (e) => {
+      if (x0 == null) return;
+      const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0;
+      x0 = null;
+      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) (dx < 0 ? rendition.next() : rendition.prev());
+    }, { passive: true });
+    d.addEventListener('keydown', readerKey);
+  });
+  rendition.on('relocated', onRelocated);
+
+  const pos = localStorage.getItem('mina-bocker:pos:' + bookId);
+  try { await rendition.display(pos || undefined); } catch { await rendition.display(); }
+  book.loaded.navigation.then((nav) => renderToc(nav.toc)).catch(() => {});
+  startReadingIfNeeded(bookId);
+
+  // Positioner för procent (sparas så att det bara behöver räknas ut en gång)
+  await book.ready;
+  const key = 'mina-bocker:loc:' + bookId;
+  const saved = localStorage.getItem(key);
+  if (saved) { try { book.locations.load(saved); } catch { /* räkna om */ } }
+  if (!book.locations.length()) {
+    await book.locations.generate(1200);
+    try { localStorage.setItem(key, book.locations.save()); } catch { /* för stort, räknas om nästa gång */ }
+  }
+  if (rd?.book !== book) return;
+  // Saknas sidantal: uppskatta (ca 1 800 tecken per tryckt sida) så att framstegen syns för familjen.
+  const cur = db.books[bookId];
+  if (cur && !cur.pages) { put('books', { ...cur, pages: Math.max(1, Math.round((book.locations.length() * 1200) / 1800)) }); commit(); }
+  const loc = rendition.currentLocation();
+  if (loc?.start) onRelocated(loc);
+}
+
+function startReadingIfNeeded(bookId) {
+  if (!me) return;
+  const e = db.entries[entryId(bookId, me)];
+  if (e?.status === 'reading' || e?.status === 'read') return;
+  put('entries', { ...blankEntry(bookId, me), ...e, status: 'reading', started_at: today(), finished_at: null });
+  commit();
+}
+
+function onRelocated(loc) {
+  if (!rd || !loc?.start) return;
+  localStorage.setItem('mina-bocker:pos:' + rd.bookId, loc.start.cfi);
+  const p = loc.atEnd ? 1 : rd.book.locations.length() ? rd.book.locations.percentageFromCfi(loc.start.cfi) : null;
+  rd.pct = p;
+  $('#rdPct').textContent = p != null ? `${Math.round(p * 100)} %` : '';
+  const href = (loc.start.href || '').split('#')[0];
+  const ch = rd.toc.filter((t) => t.href.split('#')[0].endsWith(href) || href.endsWith(t.href.split('#')[0])).pop();
+  $('#rdChapter').textContent = ch ? ch.label : '';
+  $('#rdFinish').hidden = !(loc.atEnd || (p != null && p >= 0.97));
+  clearTimeout(rdSaveTimer);
+  rdSaveTimer = setTimeout(saveReaderProgress, 2000);
+}
+
+function saveReaderProgress() {
+  if (!rd || rd.pct == null || !me) return;
+  const b = db.books[rd.bookId];
+  const e = db.entries[entryId(rd.bookId, me)];
+  if (!b?.pages || e?.status !== 'reading') return;
+  const page = Math.max(1, Math.round(rd.pct * b.pages));
+  if (page !== e.page) { put('entries', { ...e, page }); commit(); }
+}
+
+function renderToc(toc) {
+  const flat = [];
+  const walk = (items, depth) => items.forEach((it) => { flat.push({ label: it.label.trim(), href: it.href, depth }); if (it.subitems) walk(it.subitems, depth + 1); });
+  walk(toc || [], 0);
+  if (!rd) return;
+  rd.toc = flat;
+  $('#rdToc').innerHTML = flat.length
+    ? flat.map((t, i) => `<button type="button" data-toc="${i}" style="padding-left:${12 + t.depth * 16}px">${esc(t.label)}</button>`).join('')
+    : '<p class="muted">Ingen innehållsförteckning.</p>';
+}
+
+function applyReaderPrefs() {
+  if (!rd) return;
+  const { prefs, rendition } = rd;
+  rendition.themes.select(prefs.theme);
+  rendition.themes.fontSize(`${prefs.size}%`);
+  const t = THEMES[prefs.theme];
+  $('#reader').style.setProperty('--rd-bg', t.bg);
+  $('#reader').style.setProperty('--rd-fg', t.fg);
+  saveJSON(READER_KEY, prefs);
+}
+
+function readerKey(e) {
+  if (!rd) return;
+  if (e.key === 'ArrowRight' || e.key === 'PageDown') rd.rendition.next();
+  if (e.key === 'ArrowLeft' || e.key === 'PageUp') rd.rendition.prev();
+  if (e.key === 'Escape') closeReader();
+}
+
+function closeReader() {
+  if (!rd) return;
+  clearTimeout(rdSaveTimer);
+  saveReaderProgress();
+  try { rd.rendition.destroy(); rd.book.destroy(); } catch { /* redan stängd */ }
+  rd = null;
+  $('#reader').hidden = true;
+  document.body.classList.remove('reading-mode');
+  render();
+}
+
+function finishFromReader() {
+  if (!rd) return;
+  const bookId = rd.bookId;
+  closeReader();
+  const e = db.entries[entryId(bookId, me)];
+  const b = db.books[bookId];
+  if (e) put('entries', { ...e, status: 'read', page: b?.pages || e.page, finished_at: today() });
+  commit();
+  toast(`Grattis! ”${b?.title}” är utläst 🎉`);
+  openEdit(bookId, me);
+}
+
+// ---------- Händelser: omslag, hylla, bokvy, läsare ----------
+$('#editCoverBtn').addEventListener('click', openCoverPicker);
+$('#coverPicker').addEventListener('click', (e) => {
+  if (e.target.closest('[data-own]')) { $('#coverFile').click(); return; }
+  const item = e.target.closest('[data-cover]');
+  if (!item) return;
+  editCover = item.dataset.cover;
+  renderEditCover();
+  $('#coverPicker').hidden = true;
+});
+$('#coverFile').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    editCover = await resizeImage(file);
+    renderEditCover();
+    $('#coverPicker').hidden = true;
+  } catch { toast('Kunde inte läsa bilden'); }
+});
+
+$('#viewToggle').addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-view]');
+  if (!btn) return;
+  shelfView = btn.dataset.view;
+  localStorage.setItem(SHELF_VIEW_KEY, shelfView);
+  render();
+});
+
+$('#bookDialog').addEventListener('click', async (e) => {
+  const prog = e.target.closest('[data-progress]');
+  if (prog) { openProgress(prog.dataset.progress); return; }
+  const btn = e.target.closest('[data-bv]');
+  if (!btn) return;
+  const id = viewBookId;
+  const a = btn.dataset.bv;
+  if (a === 'read') openReader(id);
+  if (a === 'start') quickAction(id, 'start');
+  if (a === 'progress') openProgress(entryId(id, target()));
+  if (a === 'epub') $('#bvEpubFile').click();
+  if (a === 'edit') { $('#bookDialog').close(); openEdit(id); }
+  if (a === 'rmepub' && confirm('Ta bort epub-filen från den här enheten? Boken ligger kvar.')) {
+    await fileDel(id).catch(() => {});
+    localEpubs.delete(id);
+    render();
+  }
+});
+$('#bvEpubFile').addEventListener('change', async (e) => {
+  const files = e.target.files;
+  const id = viewBookId;
+  if (files.length) await importEpubs(files, id);
+  e.target.value = '';
+  if (localEpubs.has(id)) openBook(id);
+});
+
+$('#epubImportBtn').addEventListener('click', () => $('#epubFile').click());
+$('#epubFile').addEventListener('change', async (e) => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  if (!files.length) return;
+  $('#addDialog').close();
+  const id = await importEpubs(files);
+  if (id && files.length === 1) openBook(id);
+  else if (id) { currentTab = 'shelf'; render(); }
+});
+
+$('#rdClose').addEventListener('click', closeReader);
+$('#rdPrev').addEventListener('click', () => rd?.rendition.prev());
+$('#rdNext').addEventListener('click', () => rd?.rendition.next());
+$('#rdSmaller').addEventListener('click', () => { if (rd) { rd.prefs.size = Math.max(60, rd.prefs.size - 10); applyReaderPrefs(); } });
+$('#rdBigger').addEventListener('click', () => { if (rd) { rd.prefs.size = Math.min(220, rd.prefs.size + 10); applyReaderPrefs(); } });
+$('#rdTheme').addEventListener('click', () => {
+  if (!rd) return;
+  const order = Object.keys(THEMES);
+  rd.prefs.theme = order[(order.indexOf(rd.prefs.theme) + 1) % order.length];
+  applyReaderPrefs();
+});
+$('#rdTocBtn').addEventListener('click', () => { $('#rdToc').hidden = !$('#rdToc').hidden; });
+$('#rdToc').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-toc]');
+  if (!btn || !rd) return;
+  rd.rendition.display(rd.toc[+btn.dataset.toc].href);
+  $('#rdToc').hidden = true;
+});
+$('#rdFinish').addEventListener('click', finishFromReader);
+document.addEventListener('keydown', (e) => { if (rd && !$('#reader').hidden) readerKey(e); });
+window.addEventListener('resize', () => { if (rd) rd.rendition.resize(); });
+window.addEventListener('pagehide', saveReaderProgress);
+
 // ---------- Start ----------
 (async function start() {
   if (who !== 'all' && !db.members[who]) who = me || 'all';
@@ -1055,4 +1627,6 @@ if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catc
   }
   if (!me || !db.members[me]) openWho();
   else migrateV1();
+  fileKeys().then((keys) => { localEpubs = new Set(keys); render(); }).catch(() => {});
+  setTimeout(autoCovers, 1500);
 })();

@@ -29,6 +29,10 @@
   </nav>
 
   <div class="people" id="people" aria-label="Visa för"></div>
+  <div class="view-toggle" id="viewToggle" hidden>
+    <button data-view="spines" aria-pressed="true">📚 Hylla</button>
+    <button data-view="list" aria-pressed="false">☰ Lista</button>
+  </div>
 
   <div class="filter">
     <input id="filter" type="search" placeholder="Filtrera på titel eller författare…" aria-label="Filtrera">
@@ -52,7 +56,11 @@
       </div>
       <video id="scanVideo" playsinline muted hidden></video>
       <div id="results" class="results"></div>
-      <button type="button" id="manualBtn" class="link-btn">Lägg till manuellt</button>
+      <div class="actions center">
+        <button type="button" id="epubImportBtn" class="btn">📖 Importera epub-filer</button>
+        <button type="button" id="manualBtn" class="link-btn">Lägg till manuellt</button>
+      </div>
+      <input type="file" id="epubFile" accept=".epub,application/epub+zip" multiple hidden>
     </form>
   </dialog>
 
@@ -64,7 +72,9 @@
         <button type="button" class="icon-btn" aria-label="Stäng" data-close>✕</button>
       </div>
       <div class="edit-grid">
-        <img id="editCover" class="cover big" alt="">
+        <button type="button" id="editCoverBtn" class="cover-btn" aria-label="Byt omslag">
+          <span id="editCover"></span><span class="cover-hint">Byt omslag</span>
+        </button>
         <div class="fields">
           <label>Titel <input name="title" required></label>
           <label>Författare <input name="authors"></label>
@@ -75,6 +85,8 @@
           </div>
         </div>
       </div>
+      <div id="coverPicker" class="cover-picker" hidden></div>
+      <input type="file" id="coverFile" accept="image/*" hidden>
       <label class="check"><input type="checkbox" name="owned"> Finns i bokhyllan</label>
 
       <section class="member-section">
@@ -98,6 +110,29 @@
         <button value="save" class="btn primary" id="saveBtn">Spara</button>
       </div>
     </form>
+  </dialog>
+
+  <!-- Visa bok -->
+  <dialog id="bookDialog">
+    <div class="sheet">
+      <div class="sheet-head">
+        <span></span>
+        <button type="button" class="icon-btn" aria-label="Stäng" data-close>✕</button>
+      </div>
+      <div class="book-view">
+        <div id="bvCover"></div>
+        <div class="bv-info">
+          <h2 id="bvTitle"></h2>
+          <p id="bvAuthor" class="bv-author"></p>
+          <p id="bvMeta" class="muted"></p>
+          <div id="bvTags" class="tags"></div>
+        </div>
+      </div>
+      <div id="bvFamily"></div>
+      <div id="bvNotes"></div>
+      <div class="actions wrap" id="bvActions"></div>
+      <input type="file" id="bvEpubFile" accept=".epub,application/epub+zip" hidden>
+    </div>
   </dialog>
 
   <!-- Hur långt har man kommit -->
@@ -162,6 +197,29 @@
       <p class="muted" id="stats"></p>
     </form>
   </dialog>
+
+  <!-- Epub-läsare -->
+  <div id="reader" class="reader" hidden>
+    <div class="reader-bar">
+      <button type="button" class="icon-btn" id="rdClose" aria-label="Stäng">←</button>
+      <span id="rdTitle" class="rd-title"></span>
+      <button type="button" class="icon-btn" id="rdSmaller" aria-label="Mindre text">A−</button>
+      <button type="button" class="icon-btn" id="rdBigger" aria-label="Större text">A+</button>
+      <button type="button" class="icon-btn" id="rdTheme" aria-label="Byt färg">◐</button>
+      <button type="button" class="icon-btn" id="rdTocBtn" aria-label="Innehåll">☰</button>
+    </div>
+    <div class="reader-main">
+      <div id="rdView" class="rd-view"></div>
+      <button type="button" class="rd-zone left" id="rdPrev" aria-label="Föregående sida"></button>
+      <button type="button" class="rd-zone right" id="rdNext" aria-label="Nästa sida"></button>
+      <nav id="rdToc" class="rd-toc" hidden></nav>
+    </div>
+    <div class="reader-foot">
+      <span id="rdChapter" class="rd-chapter"></span>
+      <button type="button" id="rdFinish" class="btn" hidden>✓ Utläst</button>
+      <span id="rdPct" class="rd-pct"></span>
+    </div>
+  </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 

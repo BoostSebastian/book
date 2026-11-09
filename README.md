@@ -7,6 +7,14 @@ En webbapp (PWA) för hela familjen:
 - **Önskelista** – per person (t.ex. Klaras önskelista)
 - **Läst** – med datum, betyg och anteckningar per person
 
+Dessutom:
+
+- **Visuell bokhylla** – bokhyllan visas som bokryggar på hyllplan (färgen hämtas från omslaget, tjockleken från antal sidor). Tryck på en bok för att se den.
+- **Omslag** – hämtas automatiskt (Google Books / Open Library). Under *Redigera → Byt omslag* kan du välja bland flera omslag eller ta en bild på din egen bok.
+- **Läs epub** – importera dina epub-filer (＋ → *Importera epub-filer*, eller *＋ Epub* på en bok) och läs direkt i appen.
+  Appen kommer ihåg var du är och uppdaterar hur långt du kommit, så resten av familjen ser det.
+  Epub-filerna sparas på den enhet där du importerar dem (de synkas inte).
+
 Välj **Alla** eller en person (Sebastian, Matilda, Melker, Klara…) överst för att se vad just den läser.
 Läser flera samma bok syns allas framsteg på samma kort.
 
@@ -67,6 +75,6 @@ och öppna <http://localhost:8000>.
 | `app.js` | All logik: lagring, synk, familjeprofiler, sök, skanning, export/import |
 | `config.js` | Supabase-adress och publik nyckel |
 | `supabase/schema.sql` | Databastabeller och behörigheter |
-| `vendor/` | Supabase-klienten (lokal kopia så appen startar offline) |
+| `vendor/` | Supabase-klienten och epub-läsaren (epub.js + JSZip), lokala kopior så allt fungerar offline |
 | `sw.js` | Service worker för offlinestöd |
 | `manifest.webmanifest`, `icon*` | Gör appen installerbar |

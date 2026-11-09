@@ -1,6 +1,6 @@
 // Enkel offline-cache: appens egna filer cachas, omslag cachas när de visas.
-const CACHE = 'mina-bocker-v2';
-const ASSETS = ['./', 'index.html', 'styles.css', 'config.js', 'vendor/supabase-2.45.4.js', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
+const CACHE = 'mina-bocker-v3';
+const ASSETS = ['./', 'index.html', 'styles.css', 'config.js', 'vendor/supabase-2.45.4.js', 'vendor/jszip-3.10.1.min.js', 'vendor/epub-0.3.93.min.js', 'app.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
@@ -29,8 +29,8 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // Bokomslag: cache först.
-  if (req.destination === 'image') {
+  // Bokomslag: cache först. (CORS-hämtningar för bokryggsfärger går förbi cachen.)
+  if (req.destination === 'image' && req.mode !== 'cors') {
     e.respondWith(
       caches.match(req).then((hit) => hit || fetch(req).then((res) => {
         const copy = res.clone();

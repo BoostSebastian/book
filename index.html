@@ -218,6 +218,24 @@
     </form>
   </dialog>
 
+  <!-- Nytt lösenord -->
+  <dialog id="newPassDialog">
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2>Nytt lösenord</h2>
+        <button type="button" class="icon-btn" aria-label="Stäng" data-close>✕</button>
+      </div>
+      <p class="muted" id="newPassIntro"></p>
+      <input id="newPass1" type="password" placeholder="Nytt lösenord (minst 6 tecken)" autocomplete="new-password">
+      <input id="newPass2" type="password" placeholder="Upprepa lösenordet" autocomplete="new-password">
+      <div class="actions">
+        <span class="spacer"></span>
+        <button type="button" class="btn" data-close>Avbryt</button>
+        <button type="button" id="newPassSave" class="btn primary">Spara</button>
+      </div>
+    </div>
+  </dialog>
+
   <!-- Meny -->
   <dialog id="menuDialog">
     <form method="dialog" class="sheet" id="menuForm">

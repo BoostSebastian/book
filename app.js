@@ -591,6 +591,7 @@ function addMember(name) {
 }
 
 function openWho() {
+  if ($('#newPassDialog').open) return; // visas när lösenordet är valt
   const ms = members();
   $('#whoList').innerHTML = (ms.length ? ms.map((m) =>
     `<button type="button" class="who-pick" data-pick="${esc(m.id)}">${avatar(m)}${esc(m.name)}${m.id === me ? ' <span class="muted">(vald)</span>' : ''}</button>`).join('')
@@ -628,6 +629,10 @@ function migrateV1(list = loadJSON(V1_KEY, null), memberId = me) {
 
 // ---------- Synk (Supabase) ----------
 const cfg = window.BOOKS_CONFIG || {};
+// Läs av återställningslänken från mejlet innan Supabase-klienten tar bort den ur adressen.
+const authHash = new URLSearchParams(location.hash.slice(1));
+let recoveryPending = authHash.get('type') === 'recovery';
+const authLinkError = authHash.get('error_description');
 const sb = cfg.supabaseUrl && cfg.supabaseKey && window.supabase
   ? window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey)
   : null;
@@ -769,12 +774,14 @@ function renderSyncPanel(statusText) {
         <button type="button" id="loginBtn" class="btn primary">Logga in</button>
         <button type="button" id="signupBtn" class="btn">Skapa familjekonto</button>
       </div>
+      <button type="button" id="forgotBtn" class="link-btn">Glömt lösenord?</button>
     </div>`;
     return;
   }
   el.innerHTML = `<p class="muted">Inloggad som <b>${esc(session.user.email)}</b> · ${esc(statusText || '')}</p>
     <div class="actions">
       <button type="button" id="syncNowBtn" class="btn">⟳ Synka nu</button>
+      <button type="button" id="passwordBtn" class="btn">Byt lösenord</button>
       <button type="button" id="logoutBtn" class="btn">Logga ut</button>
     </div>`;
 }
@@ -795,6 +802,7 @@ async function onSession(s) {
   const was = session?.user?.id;
   session = s;
   updateSyncUI();
+  if (s && recoveryPending) { recoveryPending = false; openNewPassword(true); }
   if (s && s.user.id !== was) {
     subscribe();
     await sync();
@@ -802,6 +810,36 @@ async function onSession(s) {
   } else if (!s) {
     subscribe();
   }
+}
+
+// ---------- Lösenord ----------
+async function forgotPassword() {
+  const email = $('#email').value.trim();
+  if (!email) { toast('Skriv din e-post först'); $('#email').focus(); return; }
+  const redirectTo = location.origin + location.pathname;
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
+  if (error) { toast(error.message); return; }
+  toast('Kolla mejlen – öppna länken på den här enheten för att välja nytt lösenord');
+}
+
+function openNewPassword(fromLink) {
+  $('#newPassIntro').textContent = fromLink
+    ? 'Välj ett nytt lösenord för familjekontot.'
+    : `Nytt lösenord för ${session?.user?.email || 'kontot'}. Alla i familjen behöver logga in med det nya på sina enheter.`;
+  $('#newPass1').value = '';
+  $('#newPass2').value = '';
+  $('#newPassDialog').showModal();
+  $('#newPass1').focus();
+}
+
+async function saveNewPassword() {
+  const a = $('#newPass1').value, b = $('#newPass2').value;
+  if (a.length < 6) { toast('Lösenordet måste vara minst 6 tecken'); return; }
+  if (a !== b) { toast('Lösenorden är inte lika'); return; }
+  const { error } = await sb.auth.updateUser({ password: a });
+  if (error) { toast(error.message); return; }
+  $('#newPassDialog').close();
+  toast('Lösenordet är bytt ✓');
 }
 
 // ---------- Export / import ----------
@@ -1014,6 +1052,8 @@ $('#menuDialog').addEventListener('click', async (e) => {
   const id = e.target.id;
   if (id === 'loginBtn') login(false);
   if (id === 'signupBtn') login(true);
+  if (id === 'forgotBtn') forgotPassword();
+  if (id === 'passwordBtn') { $('#menuDialog').close(); openNewPassword(false); }
   if (id === 'syncNowBtn') sync();
   if (id === 'logoutBtn' && confirm('Logga ut? Böckerna ligger kvar på den här enheten men synkas inte längre.')) await sb.auth.signOut();
   if (id === 'familyAdd') {
@@ -1046,6 +1086,9 @@ $('#menuDialog').addEventListener('keydown', (e) => {
   if (e.target.id === 'familyNew') { e.preventDefault(); $('#familyAdd').click(); }
   if (e.target.id === 'password') { e.preventDefault(); login(false); }
 });
+$('#newPassSave').addEventListener('click', saveNewPassword);
+$('#newPassDialog').addEventListener('close', () => { if (!me || !db.members[me]) openWho(); });
+$('#newPass2').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveNewPassword(); } });
 $('#exportBtn').addEventListener('click', exportData);
 $('#importBtn').addEventListener('click', () => $('#importFile').click());
 $('#importFile').addEventListener('change', (e) => {
@@ -1853,6 +1896,7 @@ $('#editForm').elements.pages.addEventListener('input', () => { if ($('#spineEdi
     await onSession(data.session);
     sb.auth.onAuthStateChange((_event, s) => { setTimeout(() => onSession(s), 0); });
   }
+  if (authLinkError) toast(/expired|invalid/i.test(authLinkError) ? 'Länken har gått ut – be om en ny under ⋯ → Glömt lösenord?' : authLinkError);
   if (!me || !db.members[me]) openWho();
   else migrateV1();
   fileKeys().then((keys) => { localEpubs = new Set(keys); render(); }).catch(() => {});

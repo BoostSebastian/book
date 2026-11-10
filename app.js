@@ -13,7 +13,7 @@
  * skickas till Supabase när man är inloggad och har nät. Appen fungerar alltså offline.
  */
 
-const APP_VERSION = '19';
+const APP_VERSION = '20';
 const DB_KEY = 'mina-bocker:v2';
 const OUTBOX_KEY = 'mina-bocker:outbox';
 const ME_KEY = 'mina-bocker:me';
@@ -820,9 +820,13 @@ async function sync() {
   }
 }
 
+// Kolumner som inte får vara tomma i databasen: skicka ett standardvärde om raden saknar dem
+// (t.ex. läsningar som skapades innan ljudboksfältet fanns).
+const COLUMN_DEFAULTS = { books: { owned: false }, entries: { audio: false, rating: 0 } };
 function toRow(table, row) {
   const out = { household_id: session.user.id };
-  for (const c of COLUMNS[table]) out[c] = row[c] ?? null;
+  const defaults = COLUMN_DEFAULTS[table] || {};
+  for (const c of COLUMNS[table]) out[c] = row[c] ?? defaults[c] ?? null;
   return out;
 }
 

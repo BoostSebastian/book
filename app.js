@@ -13,7 +13,7 @@
  * skickas till Supabase när man är inloggad och har nät. Appen fungerar alltså offline.
  */
 
-const APP_VERSION = '20';
+const APP_VERSION = '21';
 const DB_KEY = 'mina-bocker:v2';
 const OUTBOX_KEY = 'mina-bocker:outbox';
 const ME_KEY = 'mina-bocker:me';
@@ -158,6 +158,7 @@ function render() {
   if (q) list = list.filter((b) => `${b.title} ${b.authors} ${b.series || ''}`.toLowerCase().includes(q));
   const sort = sortFor(currentTab);
   renderSortBar(sort);
+  $('#seriesTip').hidden = sort.key !== 'series';
   list = sortBooks(list, sort);
 
   const el = $('#list');
@@ -2267,7 +2268,12 @@ async function fetchMeta(seed) {
     let work = m.olWork;
     if (isbn) {
       const ed = await olByIsbn(isbn);
-      if (ed) { fillMissing(m, { pages: ed.number_of_pages }); work = work || ed.works?.[0]?.key; }
+      if (ed) {
+        fillMissing(m, { pages: ed.number_of_pages });
+        work = work || ed.works?.[0]?.key;
+        const sr = Array.isArray(ed.series) ? ed.series[0] : ed.series;
+        if (sr && !m.series) { const ps = parseSeriesText(sr); fillMissing(m, { series: ps.name, series_no: ps.no }); }
+      }
     }
     if (!m.pages || !m.genres.length || !work) {
       try {
@@ -2516,6 +2522,8 @@ async function applyMatch(r) {
   set('isbn', m.isbn, 'ISBN');
   set('authors', m.authors, 'författare', !f.authors.value.trim());
   set('description', m.description, 'baksidestext', !f.description.value.trim());
+  set('series', m.series, 'serie', !f.series.value.trim());
+  if (m.series_no != null) set('series_no', m.series_no, 'nr i serien', !String(f.series_no.value).trim());
   if (m.cover && !editCover) { editCover = m.cover; changed.push('omslag'); }
   renderEditCover();
   if ($('#spineEdit').open) renderSpinePreview();
@@ -2524,7 +2532,8 @@ async function applyMatch(r) {
   const cur = db.books[editBookId];
   if (cur && changed.length) {
     put('books', { ...cur, pages: int(f.pages.value), year: f.year.value.trim(), isbn: f.isbn.value.trim(), authors: f.authors.value.trim(),
-      genres: f.genres.value.split(',').map((g) => g.trim()).filter(Boolean).slice(0, 5), description: f.description.value.trim(), cover: editCover });
+      genres: f.genres.value.split(',').map((g) => g.trim()).filter(Boolean).slice(0, 5), description: f.description.value.trim(), cover: editCover,
+      series: f.series.value.trim() || null, series_no: num(f.series_no.value) });
     commit();
   }
   const quota = !googleOk() ? ' (Google Books är tillfälligt otillgängligt)' : '';
@@ -2648,6 +2657,131 @@ $('#sortDir').addEventListener('click', () => {
   saveSort(currentTab, { ...sort, dir: -effectiveSort(sort).dir });
   render();
 });
+
+// ---------- Hitta serier automatiskt ----------
+const SERIES_STOP = new Set(('the and of a an or in on at to for with from by is are was be how you your my our this that it its ' +
+  'och i på en ett det den de som med för till av om är var hur du din mitt vår ' +
+  'book books novel novels story stories trilogy series volume edition collection rules complete part chronicles').split(' '));
+const num = (v) => { const n = parseFloat(String(v).replace(',', '.')); return Number.isFinite(n) ? n : null; };
+const escRe = (t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// "Star Wars ; 3", "Jack Reacher, #30", "The First Law -- bk. 2" → { name, no }
+function parseSeriesText(t) {
+  const m = String(t).match(/^(.*?)(?:\s*[,;:(-]+\s*(?:#|no\.?|nr\.?|bk\.?|book|del|vol\.?)?\s*(\d+(?:[.,]\d+)?)\)?)?\s*$/i);
+  const name = (m?.[1] || '').replace(/^(a|an)\s+/i, '').replace(/\s+(novel|series|serien)$/i, '').trim();
+  return { name, no: m?.[2] ? num(m[2]) : null };
+}
+
+async function detectSeries(onProgress) {
+  const all = Object.values(db.books);
+  const todo = all.filter((b) => !b.series);
+  const groups = new Map();
+  const add = (name, b, no, sure) => {
+    name = String(name || '').trim();
+    if (name.length < 3 || name.length > 60) return;
+    const k = fold(name).replace(/^the\s+/, '');
+    if (!groups.has(k)) groups.set(k, { name, sure: false, items: new Map() });
+    const g = groups.get(k);
+    g.sure = g.sure || sure;
+    if (!g.items.has(b.id) || (no != null && g.items.get(b.id) == null)) g.items.set(b.id, no);
+  };
+  const numberAfter = (title, name) => num((String(title).match(new RegExp(escRe(name) + "(?:'s)?\\W{0,3}(\\d+(?:[.,]\\d+)?)\\b", 'i')) || [])[1]);
+
+  // 1) "Titel (Serie, #3)"
+  for (const b of todo) {
+    const m = b.title.match(/\(([^()]+?)[,;]?\s*#\s*(\d+(?:[.,]\d+)?)\)\s*$/) || b.title.match(/\(([^()]+?)\s+(\d+(?:[.,]\d+)?)\)\s*$/);
+    if (m) add(m[1], b, num(m[2]), true);
+  }
+  // 2) Samma början före kolon/tankstreck hos minst två böcker: "Star Wars: …", "Star Wars – …"
+  const prefixOf = (t) => { const m = String(t).match(/^(.{3,40}?)\s*(?::|\s[–-]\s)/); return m ? m[1].replace(/^the\s+/i, '').trim() : null; };
+  // Räcker att början finns i minst två titlar ("Star Wars: The Dark Lord Trilogy" + "The Star Wars Trilogy").
+  for (const b of todo) {
+    const p = prefixOf(b.title);
+    if (p && all.filter((x) => fold(x.title).includes(fold(p))).length >= 2) add(p, b, null, false);
+  }
+  // 3) Samma ord i titlar av samma författare: "Jack Reacher's Rules" + "Reacher 30" → Reacher
+  const byAuthor = new Map();
+  for (const b of todo) { const a = authorKey(b).split(' ')[0]; if (a) byAuthor.set(a, [...(byAuthor.get(a) || []), b]); }
+  for (const books of byAuthor.values()) {
+    if (books.length < 2) continue;
+    const seen = new Map();
+    for (const b of books) {
+      const words = new Set(b.title.split(/[^\p{L}\p{N}']+/u).map((w) => w.replace(/'s$/i, '')).filter((w) => w.length >= 4 && /^\p{Lu}/u.test(w) && !SERIES_STOP.has(w.toLowerCase())));
+      for (const w of words) seen.set(w, [...(seen.get(w) || []), b]);
+    }
+    for (const [w, bs] of seen) {
+      if (bs.length < 2) continue;
+      // Finns ett namn framför ordet i någon titel ("Jack Reacher") används det.
+      const full = bs.map((b) => (b.title.match(new RegExp(`(\\p{Lu}\\p{L}+\\s+${escRe(w)})`, 'u')) || [])[1]).find(Boolean);
+      for (const b of bs) add(full || w, b, numberAfter(b.title, w), false);
+    }
+  }
+  // 4) Open Library: utgåvans serie via ISBN
+  const withIsbn = todo.filter((b) => normIsbn(b.isbn || '')).slice(0, 40);
+  let i = 0;
+  for (const b of withIsbn) {
+    onProgress?.(`Frågar Open Library… ${++i}/${withIsbn.length}`);
+    const ed = await olByIsbn(normIsbn(b.isbn));
+    const s = Array.isArray(ed?.series) ? ed.series[0] : ed?.series;
+    if (s) { const p = parseSeriesText(s); add(p.name, b, p.no, true); }
+  }
+  // 5) Befintliga och hittade serienamn som står i andra titlar ("The Star Wars Trilogy")
+  const names = [...new Set([...all.map((b) => b.series).filter(Boolean), ...[...groups.values()].map((g) => g.name)])];
+  for (const b of todo) for (const n of names) {
+    if (fold(b.title).includes(fold(n))) add(n, b, numberAfter(b.title, n), all.some((x) => x.series && fold(x.series) === fold(n)));
+  }
+  // Slå ihop grupper med samma böcker och behåll de som är troliga
+  const key = (n) => fold(n).replace(/^the\s+/, '');
+  const existing = new Set(all.map((b) => b.series && key(b.series)).filter(Boolean));
+  return [...groups.values()]
+    .filter((g) => g.items.size >= 2 || g.sure || existing.has(key(g.name)))
+    .sort((a, b) => (b.sure - a.sure) || b.items.size - a.items.size || a.name.localeCompare(b.name, 'sv'))
+    .filter((g, idx, arr) => !arr.slice(0, idx).some((o) => [...g.items.keys()].every((id) => o.items.has(id)))); // bort med dubbletter
+}
+
+let foundSeries = [];
+async function openFindSeries() {
+  const dlg = $('#seriesDialog');
+  $('#seriesFound').innerHTML = '<p class="muted">Letar…</p>';
+  $('#seriesApply').disabled = true;
+  if (!dlg.open) dlg.showModal();
+  foundSeries = await detectSeries((t) => { $('#seriesFound').innerHTML = `<p class="muted">${esc(t)}</p>`; });
+  if (!dlg.open) return;
+  if (!foundSeries.length) {
+    $('#seriesFound').innerHTML = '<p class="muted">Hittade inga serier. Skriv in serien under ✎ Redigera på en bok – nästa bok i samma serie föreslås sedan automatiskt här.</p>';
+    return;
+  }
+  $('#seriesFound').innerHTML = foundSeries.map((g, i) => `<div class="sg">
+      <div class="sg-head"><input type="checkbox" checked data-sg="${i}" aria-label="Använd"><input class="sg-name" value="${esc(g.name)}" data-sgname="${i}" aria-label="Seriens namn"></div>
+      <ul>${[...g.items].map(([id, no]) => `<li>${no != null ? `<b>#${String(no).replace('.', ',')}</b> ` : ''}${esc(db.books[id]?.title || '')}</li>`).join('')}</ul>
+    </div>`).join('');
+  $('#seriesApply').disabled = false;
+}
+
+function applyFoundSeries() {
+  let n = 0;
+  foundSeries.forEach((g, i) => {
+    if (!$(`[data-sg="${i}"]`).checked) return;
+    const name = $(`[data-sgname="${i}"]`).value.trim();
+    if (!name) return;
+    for (const [id, no] of g.items) {
+      const b = db.books[id];
+      if (!b || b.series) continue;
+      // Boken som heter som serien är oftast del 1 ("Dungeon Crawler Carl").
+      const first = no == null && fold(b.title).replace(/^the /, '') === fold(name).replace(/^the /, '') ? 1 : null;
+      put('books', { ...b, series: name, series_no: no ?? b.series_no ?? first });
+      n++;
+    }
+  });
+  $('#seriesDialog').close();
+  if (!n) return;
+  saveSort('shelf', { key: 'series', dir: null });
+  commit();
+  toast(`${n} böcker fick en serie`);
+}
+
+$('#seriesApply').addEventListener('click', applyFoundSeries);
+$('#findSeriesBtn').addEventListener('click', () => { $('#menuDialog').close(); openFindSeries(); });
+document.addEventListener('click', (e) => { if (e.target.closest('[data-find-series]')) openFindSeries(); });
 
 // ---------- Start ----------
 (async function start() {

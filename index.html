@@ -42,6 +42,10 @@
     <button type="button" id="sortDir" class="icon-btn sort-dir">↑</button>
   </div>
 
+  <div id="seriesTip" class="series-tip" hidden>
+    <button type="button" class="btn small-btn" data-find-series>🔎 Hitta serier automatiskt</button>
+    <span class="muted small">Sätt serie under ✎ Redigera, eller låt appen föreslå.</span>
+  </div>
   <main id="list" class="list"></main>
 
   <button id="addBtn" class="fab" aria-label="Lägg till bok">＋</button>
@@ -196,6 +200,23 @@
     </div>
   </dialog>
 
+  <!-- Hitta serier -->
+  <dialog id="seriesDialog">
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2>Hitta serier</h2>
+        <button type="button" class="icon-btn" aria-label="Stäng" data-close>✕</button>
+      </div>
+      <p class="muted">Förslag utifrån titlar, författare och Open Library. Ändra namnet eller kryssa ur det som inte stämmer. Böcker som redan har en serie ändras inte.</p>
+      <div id="seriesFound" class="series-found"></div>
+      <div class="actions">
+        <span class="spacer"></span>
+        <button type="button" class="btn" data-close>Avbryt</button>
+        <button type="button" id="seriesApply" class="btn primary" disabled>Lägg till markerade</button>
+      </div>
+    </div>
+  </dialog>
+
   <!-- Hur långt har man kommit -->
   <dialog id="progressDialog">
     <form method="dialog" class="sheet" id="progressForm">
@@ -269,7 +290,8 @@
 
       <h3>Bokuppgifter</h3>
       <p class="muted">Hämta sidantal, genre, år och omslag för alla böcker som saknar något.</p>
-      <div class="actions"><button type="button" id="metaAllBtn" class="btn">🔄 Hämta uppgifter för alla</button></div>
+      <div class="actions wrap"><button type="button" id="metaAllBtn" class="btn">🔄 Hämta uppgifter för alla</button>
+        <button type="button" id="findSeriesBtn" class="btn">🔎 Hitta serier</button></div>
 
       <h3>Backup</h3>
       <div class="actions">

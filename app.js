@@ -5,7 +5,7 @@
  *
  * Data (samma struktur lokalt och i Supabase, se supabase/schema.sql):
  *   members: { id, name, color }                       – familjemedlemmar (profiler)
- *   books:   { id, title, authors, year, isbn, cover, pages, owned, spine, genres, moods, added_at }
+ *   books:   { id, title, authors, year, isbn, cover, pages, owned, spine, genres, moods, description, series, series_no, added_at }
  *   entries: { id: "<bok>:<person>", book_id, member_id,
  *              status: 'wishlist'|'reading'|'read', page, rating, notes, audio (ljudbok), started_at, finished_at }
  *
@@ -21,7 +21,7 @@ const V1_KEY = 'mina-bocker:v1';
 const TABLES = ['members', 'books', 'entries']; // i FK-ordning
 const COLUMNS = {
   members: ['id', 'name', 'color', 'updated_at'],
-  books: ['id', 'title', 'authors', 'year', 'isbn', 'cover', 'pages', 'owned', 'spine', 'genres', 'moods', 'description', 'added_at', 'updated_at'],
+  books: ['id', 'title', 'authors', 'year', 'isbn', 'cover', 'pages', 'owned', 'spine', 'genres', 'moods', 'description', 'series', 'series_no', 'added_at', 'updated_at'],
   entries: ['id', 'book_id', 'member_id', 'status', 'page', 'rating', 'notes', 'audio', 'started_at', 'finished_at', 'updated_at'],
 };
 const COLORS = ['#7a4b2a', '#2f6f8f', '#a2456f', '#3f7d3a', '#c0702a', '#5a4fa0', '#4f8a8b', '#8f3b2f'];
@@ -154,12 +154,10 @@ function render() {
   const q = $('#filter').value.trim().toLowerCase();
   const audioShelf = currentTab === 'shelf' && shelfView === 'audio';
   let list = audioShelf ? audioBooks() : booksForTab(currentTab);
-  if (q) list = list.filter((b) => `${b.title} ${b.authors}`.toLowerCase().includes(q));
-  list.sort((a, b) => {
-    if (currentTab === 'read') return latest(b.id, 'finished_at').localeCompare(latest(a.id, 'finished_at'));
-    if (currentTab === 'reading') return latest(b.id, 'started_at').localeCompare(latest(a.id, 'started_at'));
-    return (a.authors || '').localeCompare(b.authors || '', 'sv') || a.title.localeCompare(b.title, 'sv');
-  });
+  if (q) list = list.filter((b) => `${b.title} ${b.authors} ${b.series || ''}`.toLowerCase().includes(q));
+  const sort = sortFor(currentTab);
+  renderSortBar(sort);
+  list = sortBooks(list, sort);
 
   const el = $('#list');
   if (!list.length) {
@@ -185,8 +183,25 @@ function render() {
     return;
   }
   if (currentTab === 'shelf' && shelfView === 'spines') {
-    el.innerHTML = `<div class="bookcase">${list.map((b) => `<div class="slot">${spine(b)}</div>`).join('')}</div>`;
+    let prev = null;
+    const slots = list.map((b) => {
+      const g = sort.key === 'series' ? (b.series || '') : null;
+      const end = g && g !== prev ? `<div class="slot"><div class="bookend" title="${esc(g)}"><span>${esc(g)}</span></div></div>` : '';
+      prev = g;
+      return `${end}<div class="slot">${spine(b)}</div>`;
+    });
+    el.innerHTML = `<div class="bookcase">${slots.join('')}</div>`;
     extractSpineColors(list);
+    return;
+  }
+  if (sort.key === 'series') {
+    let prev;
+    el.innerHTML = list.map((b) => {
+      const g = b.series || '';
+      const head = g !== prev ? `<h3 class="group-h">${g ? esc(g) : 'Utan serie'}</h3>` : '';
+      prev = g;
+      return head + card(b);
+    }).join('');
     return;
   }
   el.innerHTML = list.map(card).join('');
@@ -225,7 +240,7 @@ function card(b) {
     ${coverHtml(b)}
     <div class="info">
       <span class="title">${esc(b.title)}</span>
-      <span class="author">${esc(b.authors)}${b.year ? ' · ' + esc(b.year) : ''}</span>
+      <span class="author">${esc(b.authors)}${b.year ? ' · ' + esc(b.year) : ''}${b.series ? ` · <span class="series">${esc(seriesLabel(b))}</span>` : ''}</span>
       ${body}
       ${quick.length ? `<div class="quick">${quick.map(([a, l]) => `<button data-action="${a}">${l}</button>`).join('')}</div>` : ''}
     </div>
@@ -365,6 +380,10 @@ function openEdit(bookId, memberId = target(), prefill = {}) {
   f.isbn.value = d.isbn || '';
   f.pages.value = d.pages ?? '';
   f.genres.value = (d.genres || []).join(', ');
+  f.series.value = d.series || '';
+  f.series_no.value = d.series_no ?? '';
+  $('#seriesList').innerHTML = [...new Set(Object.values(db.books).map((x) => x.series).filter(Boolean))]
+    .sort((x, y) => x.localeCompare(y, 'sv')).map((x) => `<option value="${esc(x)}">`).join('');
   f.description.value = d.description || '';
   f.owned.checked = !!d.owned;
   editCover = d.cover || '';
@@ -437,6 +456,8 @@ function saveEdit() {
     pages: int(f.pages.value),
     genres: f.genres.value.split(',').map((g) => g.trim()).filter(Boolean).slice(0, 5),
     description: f.description.value.trim(),
+    series: f.series.value.trim() || null,
+    series_no: (() => { const n = parseFloat(String(f.series_no.value).replace(',', '.')); return Number.isFinite(n) ? n : null; })(),
     owned: f.owned.checked,
     cover: editCover,
     spine: cleanSpine(editSpine),
@@ -782,7 +803,7 @@ async function sync() {
   } catch (err) {
     console.warn('Synk misslyckades', err);
     syncError = err?.message || String(err);
-    if (/column|schema cache|PGRST204/i.test(syncError)) syncError = 'Databasen behöver uppdateras – kör supabase/uppdatering-3.sql i Supabase (SQL Editor)';
+    if (/column|schema cache|PGRST204/i.test(syncError)) syncError = 'Databasen behöver uppdateras – kör supabase/uppdatering-4.sql i Supabase (SQL Editor)';
     setSyncState(navigator.onLine ? 'error' : 'offline');
   } finally {
     syncing = false;
@@ -1475,6 +1496,7 @@ function openBook(id) {
   if (b.owned) tags.push('I bokhyllan');
   if (localEpubs.has(id)) tags.push('E-bok på den här enheten');
   $('#bvTags').innerHTML = tags.map((t) => `<span class="tag">${t}</span>`).join('') +
+    (b.series ? `<span class="tag">📚 ${esc(seriesLabel(b))}</span>` : '') +
     (b.genres || []).map((g) => `<span class="tag genre">${esc(g)}</span>`).join('');
   $('#bvDesc').innerHTML = b.description
     ? `<h3>Baksidan</h3><p class="desc clamp">${esc(b.description)}</p>${b.description.length > 320 ? '<button type="button" class="link-btn" data-more>Visa mer</button>' : ''}`
@@ -2504,6 +2526,93 @@ $('#metaAllBtn').addEventListener('click', async () => {
     btn.disabled = false;
     btn.textContent = '🔄 Hämta uppgifter för alla';
   }
+});
+
+// ---------- Sortering ----------
+const SORT_KEY = 'mina-bocker:sort';
+const SORT_LABELS = {
+  default: 'Standard', author: 'Författare', title: 'Titel', series: 'Serie', pages: 'Längd',
+  year: 'Utgivningsår', added: 'Senast tillagd', rating: 'Betyg', color: 'Färg',
+};
+const SORT_DIR = { author: 1, title: 1, series: 1, pages: 1, year: -1, added: -1, rating: -1, color: 1, started: -1, finished: -1 };
+
+function sortFor(tab) {
+  return loadJSON(SORT_KEY, {})[tab] || { key: 'default', dir: null };
+}
+function saveSort(tab, sort) {
+  const all = loadJSON(SORT_KEY, {});
+  all[tab] = sort;
+  saveJSON(SORT_KEY, all);
+}
+function effectiveSort(sort) {
+  const key = sort.key === 'default' ? ({ reading: 'started', read: 'finished' }[currentTab] || 'author') : sort.key;
+  return { key, dir: sort.dir ?? SORT_DIR[key] ?? 1 };
+}
+
+const seriesLabel = (b) => `${b.series}${b.series_no != null && b.series_no !== '' ? ` #${String(b.series_no).replace('.', ',')}` : ''}`;
+// Efternamn först: "Astrid Lindgren, Ingrid Vang Nyman" → "lindgren astrid"
+function authorKey(b) {
+  const a = (b.authors || '').split(',')[0].trim().split(/\s+/);
+  return fold(`${a.pop() || ''} ${a.join(' ')}`);
+}
+const titleKey = (b) => fold(String(b.title || '').replace(/^(the|a|an)\s+/i, ''));
+function avgRating(b) {
+  const r = entriesOf(b.id).map((e) => e.rating).filter(Boolean);
+  return r.length ? r.reduce((x, y) => x + y, 0) / r.length : null;
+}
+// Färgton för regnbågshyllan; gråa ryggar hamnar sist
+function hueKey(b) {
+  const hex = toHex(spineColor(b));
+  const [r, g, bl] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  const mx = Math.max(r, g, bl), mn = Math.min(r, g, bl), d = mx - mn;
+  if (d < 0.08) return 1000 + (1 - mx) * 100;
+  let h = mx === r ? ((g - bl) / d) % 6 : mx === g ? (bl - r) / d + 2 : (r - g) / d + 4;
+  return ((h * 60) + 360) % 360;
+}
+const SORT_VALUE = {
+  author: authorKey, title: titleKey, pages: (b) => b.pages || null, year: (b) => int(b.year), added: (b) => b.added_at || null,
+  rating: avgRating, color: hueKey, started: (b) => latest(b.id, 'started_at') || null, finished: (b) => latest(b.id, 'finished_at') || null,
+};
+
+function sortBooks(list, sort) {
+  const { key, dir } = effectiveSort(sort);
+  const tie = (a, b) => authorKey(a).localeCompare(authorKey(b), 'sv') || titleKey(a).localeCompare(titleKey(b), 'sv');
+  const missing = (v) => v == null || v === '';
+  return [...list].sort((a, b) => {
+    if (key === 'series') {
+      if (!a.series || !b.series) return !a.series && !b.series ? tie(a, b) : a.series ? -1 : 1;
+      return dir * fold(a.series).localeCompare(fold(b.series), 'sv')
+        || (a.series_no ?? 1e9) - (b.series_no ?? 1e9) || (int(a.year) || 0) - (int(b.year) || 0) || tie(a, b);
+    }
+    const va = SORT_VALUE[key](a), vb = SORT_VALUE[key](b);
+    if (missing(va) || missing(vb)) return missing(va) && missing(vb) ? tie(a, b) : missing(va) ? 1 : -1; // saknas → sist
+    const c = typeof va === 'number' ? va - vb : String(va).localeCompare(String(vb), 'sv');
+    return dir * c || tie(a, b);
+  });
+}
+
+function renderSortBar(sort) {
+  const sel = $('#sortSel');
+  const keys = Object.keys(SORT_LABELS).filter((k) => k !== 'color' || currentTab === 'shelf');
+  const def = { reading: 'senast påbörjad', read: 'senast utläst' }[currentTab] || 'författare';
+  sel.innerHTML = keys.map((k) => `<option value="${k}">${k === 'default' ? `Sortera: ${def}` : SORT_LABELS[k]}</option>`).join('');
+  sel.value = keys.includes(sort.key) ? sort.key : 'default';
+  const { key, dir } = effectiveSort(sort);
+  const btn = $('#sortDir');
+  btn.textContent = dir === 1 ? '↑' : '↓';
+  const words = { pages: ['kortast först', 'längst först'], year: ['äldst först', 'nyast först'], added: ['äldst först', 'nyast först'],
+    rating: ['lägst först', 'högst först'], started: ['äldst först', 'senast först'], finished: ['äldst först', 'senast först'] }[key] || ['A–Ö', 'Ö–A'];
+  btn.title = btn.ariaLabel = `Ordning: ${dir === 1 ? words[0] : words[1]} (tryck för att vända)`;
+}
+
+$('#sortSel').addEventListener('change', (e) => {
+  saveSort(currentTab, { key: e.target.value, dir: null });
+  render();
+});
+$('#sortDir').addEventListener('click', () => {
+  const sort = sortFor(currentTab);
+  saveSort(currentTab, { ...sort, dir: -effectiveSort(sort).dir });
+  render();
 });
 
 // ---------- Start ----------

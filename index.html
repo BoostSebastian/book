@@ -37,7 +37,9 @@
   </div>
 
   <div class="filter">
-    <input id="filter" type="search" placeholder="Filtrera på titel eller författare…" aria-label="Filtrera">
+    <input id="filter" type="search" placeholder="Filtrera…" aria-label="Filtrera">
+    <select id="sortSel" aria-label="Sortera"></select>
+    <button type="button" id="sortDir" class="icon-btn sort-dir">↑</button>
   </div>
 
   <main id="list" class="list"></main>
@@ -88,6 +90,11 @@
             <label>ISBN <input name="isbn" inputmode="numeric"></label>
           </div>
           <label>Genre <input name="genres" placeholder="t.ex. Fantasy, Thriller" autocomplete="off"></label>
+          <div class="series-row">
+            <label>Serie / universum <input name="series" list="seriesList" placeholder="t.ex. Star Wars" autocomplete="off"></label>
+            <label>Nr <input name="series_no" inputmode="decimal" placeholder="1"></label>
+          </div>
+          <datalist id="seriesList"></datalist>
           <button type="button" id="matchBtn" class="btn small-btn">🔄 Hämta uppgifter</button>
         </div>
       </div>

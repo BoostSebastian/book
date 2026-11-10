@@ -13,6 +13,7 @@
  * skickas till Supabase när man är inloggad och har nät. Appen fungerar alltså offline.
  */
 
+const APP_VERSION = '19';
 const DB_KEY = 'mina-bocker:v2';
 const OUTBOX_KEY = 'mina-bocker:outbox';
 const ME_KEY = 'mina-bocker:me';
@@ -805,8 +806,13 @@ async function sync() {
     } else setSyncState(outbox.length ? 'pending' : 'ok');
   } catch (err) {
     console.warn('Synk misslyckades', err);
-    syncError = err?.message || String(err);
-    if (/column|schema cache|PGRST204/i.test(syncError)) syncError = 'Databasen behöver uppdateras – kör supabase/uppdatering-4.sql i Supabase (SQL Editor)';
+    // Visa det riktiga felet (med kod), så att det går att felsöka.
+    const msg = err?.message || String(err);
+    const code = err?.code ? ` [${err.code}]` : '';
+    const detail = err?.details ? ` – ${err.details}` : '';
+    syncError = err?.code === 'PGRST204' || /Could not find the '.+' column/.test(msg)
+      ? `Databasen behöver uppdateras – kör supabase/uppdatering-4.sql i Supabase (SQL Editor). (${msg})`
+      : `${msg}${detail}${code}`;
     setSyncState(navigator.onLine ? 'error' : 'offline');
   } finally {
     syncing = false;
@@ -1047,7 +1053,7 @@ function openMenu() {
     const n = Object.values(db.entries).filter((e) => e.member_id === m.id && e.status === 'read' && (e.finished_at || '').startsWith(year)).length;
     return `${m.name} ${n}`;
   }).join(', ');
-  $('#stats').textContent = `${Object.keys(db.books).length} böcker totalt.` + (perPerson ? ` Lästa i år: ${perPerson}.` : '');
+  $('#stats').textContent = `${Object.keys(db.books).length} böcker totalt.` + (perPerson ? ` Lästa i år: ${perPerson}.` : '') + ` · Version ${APP_VERSION}`;
   if (!$('#menuDialog').open) $('#menuDialog').showModal();
 }
 

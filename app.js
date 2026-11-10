@@ -1371,14 +1371,25 @@ function spineColor(b) {
   const c = spineCache[b.id];
   return c && c.src === coverSrc(b) && c.color ? c.color : hashColor(b.title);
 }
-// Tjockleken är proportionell mot antal sidor: 400 sidor blir exakt dubbelt så tjock som 200.
-// Saknas sidantal används uppmätt tjocklek (ca 160 sidor per cm), annars fotots proportioner.
+// Tjocklek: egen tjocklek i cm om den är ifylld, annars proportionell mot antal sidor
+// (400 sidor blir dubbelt så tjock som 200). 1 cm räknas som ca 160 sidor.
+// Fotad rygg: fotots form behålls alltid (sträcks aldrig) – höjden anpassas efter tjockleken,
+// högst hyllans höjd. Fylls både höjd och tjocklek i används de som de är.
 const PX_PER_PAGE = 0.1;
+const SPINE_MAX_H = 184, SPINE_MIN_H = 100;
 function spineSize(b) {
   const s = b.spine || {};
-  const h = s.h ? Math.max(90, Math.min(184, Math.round(s.h * 7.5))) : 148 + (hashStr(b.id || b.title) % 36);
-  const pages = b.pages || (s.w ? s.w * 160 : null);
-  let w = pages ? pages * PX_PER_PAGE : s.ratio ? h * s.ratio : 280 * PX_PER_PAGE;
+  let h = s.h ? s.h * 7.5 : 148 + (hashStr(b.id || b.title) % 36);
+  let w = s.w ? s.w * 160 * PX_PER_PAGE : (b.pages || 280) * PX_PER_PAGE;
+  if (s.img && s.ratio > 0 && !(s.h && s.w)) {
+    if (s.h) w = h * s.ratio;           // bara höjd ifylld: tjockleken följer fotot
+    else {
+      h = w / s.ratio;                  // höjden följer fotot
+      if (h > SPINE_MAX_H) { h = SPINE_MAX_H; w = h * s.ratio; }
+      if (h < SPINE_MIN_H) { h = SPINE_MIN_H; w = h * s.ratio; }
+    }
+  }
+  h = Math.max(90, Math.min(SPINE_MAX_H, Math.round(h)));
   w = Math.max(5, Math.min(100, Math.round(w * 2) / 2));
   return { w, h };
 }
@@ -1915,7 +1926,7 @@ function cropSpine() {
   if (sw < 6 || sh < 6) return null;
   const lying = sw > sh;
   const long = lying ? sw : sh, short = lying ? sh : sw;
-  const H = Math.min(280, Math.round(long));
+  const H = Math.min(480, Math.round(long));
   const W = Math.max(4, Math.round((short / long) * H));
   const c = document.createElement('canvas');
   c.width = W;
@@ -1974,7 +1985,7 @@ $('#spRotate').addEventListener('click', rotateSpineSource);
 $('#spUse').addEventListener('click', () => {
   const out = cropSpine();
   if (!out) return;
-  const res = { img: out.toDataURL('image/jpeg', 0.78), ratio: Math.round((out.width / out.height) * 1000) / 1000 };
+  const res = { img: out.toDataURL('image/jpeg', 0.8), ratio: Math.round((out.width / out.height) * 1000) / 1000 };
   $('#spineDialog').close();
   spDone?.(res);
 });

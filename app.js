@@ -799,7 +799,10 @@ async function sync() {
   try {
     await flush();
     await pull();
-    setSyncState(outbox.length ? 'pending' : 'ok');
+    if (missingList().length) {
+      syncError = `Databasen saknar ${missingList().join(', ')} – kör supabase/uppdatering-4.sql i Supabase (SQL Editor). Allt annat synkas.`;
+      setSyncState('error');
+    } else setSyncState(outbox.length ? 'pending' : 'ok');
   } catch (err) {
     console.warn('Synk misslyckades', err);
     syncError = err?.message || String(err);
@@ -817,6 +820,22 @@ function toRow(table, row) {
   return out;
 }
 
+// Kolumner som databasen saknar (en uppdatering i supabase/ har inte körts än).
+// De hoppas över så att resten synkar; värdena ligger kvar lokalt och skickas när kolumnen finns.
+const missingCols = { members: new Set(), books: new Set(), entries: new Set() };
+async function upsertRows(t, rows) {
+  for (let i = 0; i < 8; i++) {
+    const clean = rows.map((r) => { const o = { ...r }; for (const c of missingCols[t]) delete o[c]; return o; });
+    const res = await sb.from(t).upsert(clean.length === 1 ? clean[0] : clean);
+    const col = res.error?.code === 'PGRST204' && (res.error.message.match(/'([^']+)' column/) || [])[1];
+    if (!col || missingCols[t].has(col)) return res;
+    missingCols[t].add(col);
+  }
+  return { error: { message: 'För många saknade kolumner' } };
+}
+const hasMissingValues = (t, row) => [...missingCols[t]].some((c) => row?.[c] != null && row[c] !== '' && !(Array.isArray(row[c]) && !row[c].length));
+const missingList = () => TABLES.flatMap((t) => [...missingCols[t]].map((c) => `${t}.${c}`));
+
 async function flush() {
   if (!outbox.length) return;
   const snap = [...outbox];
@@ -824,12 +843,12 @@ async function flush() {
   for (const t of TABLES) {
     const rows = snap.filter((o) => o.table === t && o.op === 'upsert' && db[t][o.id]).map((o) => toRow(t, db[t][o.id]));
     if (!rows.length) continue;
-    const { error } = await sb.from(t).upsert(rows);
+    const { error } = await upsertRows(t, rows);
     if (!error) continue;
     if (error.code !== '23503') throw error;
     // Främmande nyckel saknas (t.ex. boken togs bort på en annan enhet) – ta raderna en och en och släpp de trasiga.
     for (const r of rows) {
-      const res = await sb.from(t).upsert(r);
+      const res = await upsertRows(t, [r]);
       if (res.error?.code === '23503') { drop.add(`${t}:${r.id}`); delete db[t][r.id]; } else if (res.error) throw res.error;
     }
   }
@@ -839,7 +858,9 @@ async function flush() {
     const { error } = await sb.from(t).delete().in('id', ids);
     if (error) throw error;
   }
-  outbox = outbox.filter((o) => !snap.includes(o) && !drop.has(`${o.table}:${o.id}`));
+  // Rader med värden i saknade kolumner ligger kvar i kön tills databasen är uppdaterad.
+  outbox = outbox.filter((o) => (!snap.includes(o) || (o.op === 'upsert' && hasMissingValues(o.table, db[o.table][o.id])))
+    && !drop.has(`${o.table}:${o.id}`));
   saveJSON(OUTBOX_KEY, outbox);
 }
 
@@ -851,6 +872,9 @@ async function pull() {
     fresh[t] = {};
     for (const { household_id, ...row } of results[i].data) fresh[t][row.id] = row;
   });
+  for (const t of TABLES) for (const c of missingCols[t]) for (const [id, row] of Object.entries(fresh[t])) {
+    if (db[t][id]?.[c] != null) row[c] = db[t][id][c];
+  }
   // Ändringar som inte hunnit skickas ligger kvar ovanpå.
   for (const o of outbox) {
     if (o.op === 'upsert' && db[o.table][o.id]) fresh[o.table][o.id] = db[o.table][o.id];

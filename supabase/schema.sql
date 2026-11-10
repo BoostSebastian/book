@@ -26,6 +26,8 @@ create table if not exists public.books (
   genres       jsonb,   -- t.ex. ["Fantasy"]
   moods        jsonb,   -- t.ex. ["Adventurous", "Funny"]
   description  text,    -- baksidestext
+  series       text,    -- serie/universum, t.ex. "Star Wars"
+  series_no    numeric, -- nummer i serien
   added_at     date,
   updated_at   timestamptz not null default now()
 );
@@ -51,6 +53,8 @@ alter table public.books   add column if not exists spine  jsonb;
 alter table public.books   add column if not exists genres jsonb;
 alter table public.books   add column if not exists moods  jsonb;
 alter table public.books   add column if not exists description text;
+alter table public.books   add column if not exists series      text;
+alter table public.books   add column if not exists series_no   numeric;
 alter table public.entries add column if not exists audio  boolean not null default false;
 
 create index if not exists books_household_idx   on public.books (household_id);

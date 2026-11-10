@@ -37,7 +37,9 @@
   </div>
 
   <div class="filter">
-    <input id="filter" type="search" placeholder="Filtrera på titel eller författare…" aria-label="Filtrera">
+    <input id="filter" type="search" placeholder="Filtrera…" aria-label="Filtrera">
+    <select id="sortSel" aria-label="Sortera"></select>
+    <button type="button" id="sortDir" class="icon-btn sort-dir">↑</button>
   </div>
 
   <main id="list" class="list"></main>
@@ -88,6 +90,11 @@
             <label>ISBN <input name="isbn" inputmode="numeric"></label>
           </div>
           <label>Genre <input name="genres" placeholder="t.ex. Fantasy, Thriller" autocomplete="off"></label>
+          <div class="series-row">
+            <label>Serie / universum <input name="series" list="seriesList" placeholder="t.ex. Star Wars" autocomplete="off"></label>
+            <label>Nr <input name="series_no" inputmode="decimal" placeholder="1"></label>
+          </div>
+          <datalist id="seriesList"></datalist>
           <button type="button" id="matchBtn" class="btn small-btn">🔄 Hämta uppgifter</button>
         </div>
       </div>
@@ -110,7 +117,7 @@
               <label>Höjd (cm) <input id="spineH" inputmode="decimal" placeholder="t.ex. 20"></label>
               <label>Tjocklek (cm) <input id="spineW" inputmode="decimal" placeholder="t.ex. 2,5"></label>
             </div>
-            <p class="muted small">Tjockleken följer antal sidor. Tjocklek i cm används bara när sidantal saknas.</p>
+            <p class="muted small">Tjockleken följer antal sidor. En fotad rygg behåller fotots form och sträcks aldrig. Vill du bestämma själv: fyll i tjocklek i cm – för en fotad rygg både höjd och tjocklek.</p>
           </div>
         </div>
       </details>
@@ -170,7 +177,7 @@
         <h2>Fota bokryggen</h2>
         <button type="button" class="icon-btn" aria-label="Stäng" data-close>✕</button>
       </div>
-      <p class="muted" id="spHelp">Ta en bild rakt framifrån – gärna på flera böcker i hyllan samtidigt. Dra sedan med fingret en ruta runt en bokrygg.</p>
+      <p class="muted" id="spHelp">Ta en bild rakt framifrån – gärna på flera böcker i hyllan samtidigt. Dra sedan med fingret en ruta runt en bokrygg.<br>Tips: bra ljus, ingen blixt, och håll mobilen rakt framför ryggen – zooma inte.</p>
       <div class="actions wrap">
         <button type="button" id="spTake" class="btn primary">📷 Ta/välj bild</button>
         <button type="button" id="spLast" class="btn" hidden>Använd förra bilden</button>

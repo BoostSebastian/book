@@ -16,6 +16,9 @@ Dessutom:
 - **Riktiga bokryggar** – fota hyllan och dra en ruta runt varje bokrygg (📷 *Rygg* i bokvyn), så ser hyllan i appen ut som din riktiga.
   Ta gärna en bild på hela hyllan och välj *Använd förra bilden* för nästa bok. Under *Redigera → Bokrygg* kan du också sätta färg och mått (cm).
 - **Omslag** – hämtas automatiskt (Google Books / Open Library). Under *Redigera → Byt omslag* kan du välja bland flera omslag eller ta en bild på din egen bok.
+- **Lyssna på egna ljudböcker** – importera DRM-fria ljudfiler (mp3, m4b, m4a …) via *＋ → 🎧 Importera ljudbok* eller *＋ Ljudfiler* på en bok.
+  Filerna sparas på enheten och fungerar offline. Spelaren har minispelare, låsskärmskontroller, hastighet, insomningstimer och kapitel,
+  och kommer ihåg var du var. Filerna synkas inte mellan enheter.
 - **Läs epub** – importera dina epub-filer (＋ → *Importera epub-filer*, eller *＋ Epub* på en bok) och läs direkt i appen.
   Appen kommer ihåg var du är och uppdaterar hur långt du kommit, så resten av familjen ser det.
   Epub-filerna sparas på den enhet där du importerar dem (de synkas inte).

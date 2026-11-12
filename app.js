@@ -13,7 +13,7 @@
  * skickas till Supabase när man är inloggad och har nät. Appen fungerar alltså offline.
  */
 
-const APP_VERSION = '21';
+const APP_VERSION = '22';
 const DB_KEY = 'mina-bocker:v2';
 const OUTBOX_KEY = 'mina-bocker:outbox';
 const ME_KEY = 'mina-bocker:me';
@@ -1187,6 +1187,8 @@ $('#deleteBtn').addEventListener('click', () => {
   deleteBook(b.id);
   fileDel(b.id).catch(() => {});
   localEpubs.delete(b.id);
+  if (player.bookId === b.id) stopPlayer();
+  audioDelete(b.id).catch(() => {});
   commit();
   $('#editDialog').close();
   $('#bookDialog').close();
@@ -1458,6 +1460,7 @@ function record(b) {
     <span class="lp-disc" aria-hidden="true"><span class="lp-label"></span></span>
     <span class="lp-sleeve">${coverHtml(b, 'cover lp-cover')}</span>
     ${listeners.length ? `<span class="lp-marks">${listeners.map((m) => avatar(m, 'avatar sm')).join('')}</span>` : ''}
+    ${localAudio.has(b.id) ? '<span class="lp-local" title="Ljudfiler på enheten">▶</span>' : ''}
   </button></div>`;
 }
 function spine(b, audio = false) {
@@ -1530,6 +1533,7 @@ function openBook(id) {
   const tags = [];
   if (b.owned) tags.push('I bokhyllan');
   if (localEpubs.has(id)) tags.push('E-bok på den här enheten');
+  if (localAudio.has(id)) tags.push('🎧 Ljudfiler på enheten');
   $('#bvTags').innerHTML = tags.map((t) => `<span class="tag">${t}</span>`).join('') +
     (b.series ? `<span class="tag">📚 ${esc(seriesLabel(b))}</span>` : '') +
     (b.genres || []).map((g) => `<span class="tag genre">${esc(g)}</span>`).join('');
@@ -1544,6 +1548,7 @@ function openBook(id) {
   const mine = t && db.entries[entryId(id, t)];
   const forName = t && t !== me ? ` (${esc(db.members[t].name)})` : '';
   const acts = [];
+  if (localAudio.has(id)) acts.push('<button type="button" class="btn primary" data-bv="listen">▶ Lyssna</button>');
   if (localEpubs.has(id)) acts.push('<button type="button" class="btn primary" data-bv="read">📖 Läs</button>');
   if (t && mine?.status !== 'reading') acts.push(`<button type="button" class="btn" data-bv="start">▶ Börja läsa${forName}</button>`);
   if (mine?.status === 'reading') acts.push(`<button type="button" class="btn" data-bv="progress">Hur långt?${forName}</button>`);
@@ -1552,6 +1557,9 @@ function openBook(id) {
   acts.push(localEpubs.has(id)
     ? '<button type="button" class="link-btn" data-bv="rmepub">Ta bort epub</button>'
     : '<button type="button" class="btn" data-bv="epub">＋ Epub</button>');
+  acts.push(localAudio.has(id)
+    ? '<button type="button" class="link-btn" data-bv="rmaudio">Ta bort ljudfiler</button>'
+    : '<button type="button" class="btn" data-bv="addaudio">＋ Ljudfiler</button>');
   if (!b.owned) acts.push(`<button type="button" class="btn" data-bv="own">📚 ${isAudioOnly(es) ? 'Vi har den som bok' : 'Till hyllan'}</button>`);
   else acts.push('<button type="button" class="link-btn" data-bv="unown">Ta bort ur hyllan</button>');
   acts.push('<button type="button" class="btn" data-bv="match" title="Hämta sidor, genre, år och omslag">🔄 Uppgifter</button>');
@@ -1565,8 +1573,12 @@ let localEpubs = new Set();
 let idbPromise = null;
 function idb() {
   return idbPromise ||= new Promise((res, rej) => {
-    const r = indexedDB.open('mina-bocker-filer', 1);
-    r.onupgradeneeded = () => r.result.createObjectStore('epubs', { keyPath: 'bookId' });
+    const r = indexedDB.open('mina-bocker-filer', 2);
+    r.onupgradeneeded = () => {
+      const d = r.result;
+      if (!d.objectStoreNames.contains('epubs')) d.createObjectStore('epubs', { keyPath: 'bookId' });
+      if (!d.objectStoreNames.contains('audio')) d.createObjectStore('audio', { keyPath: 'key' }).createIndex('bookId', 'bookId');
+    };
     r.onsuccess = () => res(r.result);
     r.onerror = () => { idbPromise = null; rej(r.error); };
   });
@@ -1843,6 +1855,14 @@ $('#bookDialog').addEventListener('click', async (e) => {
   const id = viewBookId;
   const a = btn.dataset.bv;
   if (a === 'read') openReader(id);
+  if (a === 'listen') { $('#bookDialog').close(); playAudioBook(id).then(openPlayerView); }
+  if (a === 'addaudio') $('#bvAudioFile').click();
+  if (a === 'rmaudio' && confirm('Ta bort ljudfilerna från den här enheten? Boken ligger kvar.')) {
+    if (player.bookId === id) stopPlayer();
+    await audioDelete(id).catch(() => {});
+    localStorage.removeItem(posKey(id));
+    render();
+  }
   if (a === 'spine') openSpinePhoto(({ img, ratio }) => {
     const cur = db.books[id];
     if (!cur) return;
@@ -2783,6 +2803,363 @@ $('#seriesApply').addEventListener('click', applyFoundSeries);
 $('#findSeriesBtn').addEventListener('click', () => { $('#menuDialog').close(); openFindSeries(); });
 document.addEventListener('click', (e) => { if (e.target.closest('[data-find-series]')) openFindSeries(); });
 
+// ---------- Ljudböcker på enheten ----------
+// Ljudfilerna (mp3/m4b/…) sparas i IndexedDB på den här enheten, en post per fil:
+// { key: "<bok>|0001", bookId, index, name, size, duration, blob }. De synkas inte (för stora).
+let localAudio = new Set();
+async function idbStore(store, mode, fn) {
+  const d = await idb();
+  return new Promise((res, rej) => {
+    const tx = d.transaction(store, mode);
+    const r = fn(tx.objectStore(store));
+    tx.oncomplete = () => res(r?.result);
+    tx.onerror = () => rej(tx.error);
+    tx.onabort = () => rej(tx.error);
+  });
+}
+const audioKey = (bookId, i) => `${bookId}|${String(i).padStart(4, '0')}`;
+const audioRecords = (bookId) => idbStore('audio', 'readonly', (st) => st.index('bookId').getAll(bookId))
+  .then((list) => (list || []).sort((a, b) => a.index - b.index));
+async function audioDelete(bookId) {
+  const keys = await idbStore('audio', 'readonly', (st) => st.index('bookId').getAllKeys(bookId));
+  if (keys?.length) await idbStore('audio', 'readwrite', (st) => { keys.forEach((k) => st.delete(k)); });
+  localAudio.delete(bookId);
+}
+async function loadLocalAudio() {
+  const keys = await idbStore('audio', 'readonly', (st) => st.getAllKeys());
+  localAudio = new Set((keys || []).map((k) => String(k).split('|')[0]));
+}
+const AUDIO_EXT = /\.(mp3|m4a|m4b|aac|ogg|oga|opus|wav|flac|webm)$/i;
+const fmtBytes = (n) => (n > 1e9 ? `${(n / 1e9).toLocaleString('sv-SE', { maximumFractionDigits: 1 })} GB` : `${Math.round(n / 1e6)} MB`);
+function fmtTime(s) {
+  s = Math.max(0, Math.floor(s || 0));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+  return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
+}
+const fmtLong = (s) => { const h = Math.floor(s / 3600), m = Math.round((s % 3600) / 60); return h ? `${h} h ${m} min` : `${m} min`; };
+
+function blobDuration(blob) {
+  return new Promise((res) => {
+    const a = new Audio();
+    const url = URL.createObjectURL(blob);
+    const done = (d) => { URL.revokeObjectURL(url); res(Number.isFinite(d) ? d : 0); };
+    a.preload = 'metadata';
+    a.onloadedmetadata = () => done(a.duration);
+    a.onerror = () => done(0);
+    setTimeout(() => done(0), 20000);
+    a.src = url;
+  });
+}
+// Titel ur filnamnen: "Project Hail Mary - 01.mp3", "Project Hail Mary - 02.mp3" → "Project Hail Mary"
+function guessAudioTitle(files) {
+  const names = files.map((f) => f.name.replace(AUDIO_EXT, ''));
+  let p = names[0];
+  for (const n of names) while (p && !n.startsWith(p)) p = p.slice(0, -1);
+  let t = (names.length > 1 ? p : names[0]).replace(/[\s\-_.()[\]]*(del|part|kapitel|chapter|cd|disc|track|spår)?[\s\-_.]*\d*\s*$/i, '');
+  t = t.replace(/^\s*\d+[\s\-_.]+/, '').replace(/[_]+/g, ' ').trim();
+  return t.length >= 2 ? t : names[0];
+}
+
+async function importAudio(fileList, bookId = null) {
+  const files = [...fileList].filter((f) => /^audio\//.test(f.type) || AUDIO_EXT.test(f.name))
+    .sort((a, b) => a.name.localeCompare(b.name, 'sv', { numeric: true }));
+  if (!files.length) { toast('Välj ljudfiler (mp3, m4b, m4a …)'); return null; }
+  const total = files.reduce((s, f) => s + f.size, 0);
+  try { await navigator.storage?.persist?.(); } catch { /* frivilligt */ }
+  try {
+    const est = await navigator.storage?.estimate?.();
+    if (est?.quota && est.quota - est.usage < total * 1.05) { toast(`Inte tillräckligt med utrymme (${fmtBytes(total)} behövs)`); return null; }
+  } catch { /* okänt utrymme – försök ändå */ }
+  let book = bookId && db.books[bookId];
+  if (!book) {
+    book = { id: uid(), title: guessAudioTitle(files), authors: '', year: '', isbn: '', cover: '', pages: null, owned: false, added_at: today() };
+    put('books', book);
+  }
+  if (player.bookId === book.id) stopPlayer();
+  await audioDelete(book.id);
+  try {
+    for (let i = 0; i < files.length; i++) {
+      toast(`Sparar ljudfil ${i + 1} av ${files.length}…`);
+      const f = files[i];
+      await idbStore('audio', 'readwrite', (st) => st.put({ key: audioKey(book.id, i), bookId: book.id, index: i, name: f.name, size: f.size, duration: 0, blob: f }));
+    }
+    // Längden läses efteråt (går snabbt, men vill inte hålla importen)
+    for (let i = 0; i < files.length; i++) {
+      const d = await blobDuration(files[i]);
+      await idbStore('audio', 'readwrite', (st) => { const g = st.get(audioKey(book.id, i)); g.onsuccess = () => { if (g.result) st.put({ ...g.result, duration: d }); }; });
+    }
+  } catch (err) {
+    console.warn(err);
+    await audioDelete(book.id).catch(() => {});
+    toast('Kunde inte spara ljudfilerna – är lagringen full?');
+    return null;
+  }
+  localAudio.add(book.id);
+  // Markera som ljudbok för mig (och lägg den under Läser om den är ny)
+  if (me) {
+    const e = db.entries[entryId(book.id, me)];
+    if (!e && !bookId) put('entries', { ...blankEntry(book.id, me), status: 'reading', audio: true, started_at: today() });
+    else if (e && !e.audio) put('entries', { ...e, audio: true });
+  }
+  commit();
+  setTimeout(autoCovers, 500);
+  setTimeout(autoMeta, 1500);
+  toast(`Ljudboken är sparad på enheten (${fmtBytes(total)}) – fungerar offline`);
+  return book.id;
+}
+
+// ---------- Spelaren ----------
+const audioEl = $('#audioEl');
+const SPEEDS = [1, 1.25, 1.5, 1.75, 2, 0.8, 0.9];
+const SLEEP = [0, 15, 30, 45, 60, -1]; // -1 = slutet av kapitlet
+const player = { bookId: null, files: [], index: 0, url: null, total: 0, sleepIdx: 0, sleepAt: 0, lastSave: 0 };
+const posKey = (id) => `mina-bocker:apos:${id}`;
+const playerPrefs = () => loadJSON('mina-bocker:player', { speed: 1 });
+
+async function playAudioBook(bookId, autoplay = true) {
+  const recs = await audioRecords(bookId).catch(() => []);
+  if (!recs.length) { toast('Ljudfilerna finns inte på den här enheten'); return; }
+  if (player.bookId !== bookId) {
+    savePosition();
+    player.bookId = bookId;
+    player.files = recs.map(({ blob, ...meta }) => meta);
+    player.total = recs.reduce((s, r) => s + (r.duration || 0), 0);
+    const pos = loadJSON(posKey(bookId), { index: 0, time: 0 });
+    await loadTrack(Math.min(pos.index, recs.length - 1), pos.time);
+  }
+  $('#miniPlayer').hidden = false;
+  document.body.classList.add('has-player');
+  updateMediaSession();
+  if (autoplay) {
+    startListeningIfNeeded(bookId);
+    try { await audioEl.play(); } catch { /* kräver tryck */ }
+  }
+  renderPlayer();
+}
+
+async function loadTrack(index, time = 0) {
+  const rec = await idbStore('audio', 'readonly', (st) => st.get(audioKey(player.bookId, index)));
+  if (!rec) return;
+  if (player.url) URL.revokeObjectURL(player.url);
+  player.index = index;
+  player.url = URL.createObjectURL(rec.blob);
+  audioEl.src = player.url;
+  audioEl.playbackRate = playerPrefs().speed;
+  await new Promise((res) => { audioEl.onloadedmetadata = res; audioEl.onerror = res; setTimeout(res, 8000); });
+  audioEl.onloadedmetadata = null;
+  audioEl.onerror = null;
+  // Längd som saknades vid importen
+  if (!player.files[index].duration && Number.isFinite(audioEl.duration)) {
+    player.files[index].duration = audioEl.duration;
+    player.total = player.files.reduce((s, f) => s + (f.duration || 0), 0);
+  }
+  if (time) audioEl.currentTime = Math.min(time, (audioEl.duration || time) - 1);
+  updateMediaSession();
+  renderPlayer();
+}
+
+function elapsed() {
+  return player.files.slice(0, player.index).reduce((s, f) => s + (f.duration || 0), 0) + (audioEl.currentTime || 0);
+}
+function savePosition(force = false) {
+  if (!player.bookId) return;
+  saveJSON(posKey(player.bookId), { index: player.index, time: audioEl.currentTime || 0 });
+  // Uppdatera "hur långt" för mig (som sida, när sidantalet är känt)
+  const now = Date.now();
+  if (!force && now - player.lastSave < 30000) return;
+  player.lastSave = now;
+  const b = db.books[player.bookId];
+  const e = me && db.entries[entryId(player.bookId, me)];
+  if (!b?.pages || !player.total || e?.status !== 'reading') return;
+  const page = Math.max(1, Math.round((elapsed() / player.total) * b.pages));
+  if (page !== e.page) { put('entries', { ...e, page }); commit(); }
+}
+function startListeningIfNeeded(bookId) {
+  if (!me) return;
+  const e = db.entries[entryId(bookId, me)];
+  if (e?.status === 'reading' && e.audio) return;
+  if (e?.status === 'read') { if (!e.audio) { put('entries', { ...e, audio: true }); commit(); } return; }
+  put('entries', { ...blankEntry(bookId, me), ...e, status: 'reading', audio: true, started_at: e?.status === 'reading' ? e.started_at : today(), finished_at: null });
+  commit();
+}
+
+function seekBy(sec) {
+  let t = (audioEl.currentTime || 0) + sec;
+  if (t < 0 && player.index > 0) { loadTrack(player.index - 1, Math.max(0, (player.files[player.index - 1].duration || 0) + t)).then(() => audioEl.play()); return; }
+  if (audioEl.duration && t > audioEl.duration && player.index < player.files.length - 1) { loadTrack(player.index + 1, t - audioEl.duration).then(() => audioEl.play()); return; }
+  audioEl.currentTime = Math.max(0, Math.min(t, audioEl.duration || t));
+}
+async function gotoTrack(i, play = true) {
+  if (i < 0 || i >= player.files.length) return;
+  await loadTrack(i, 0);
+  if (play) audioEl.play().catch(() => {});
+}
+function stopPlayer() {
+  savePosition(true);
+  audioEl.pause();
+  audioEl.removeAttribute('src');
+  audioEl.load();
+  if (player.url) URL.revokeObjectURL(player.url);
+  Object.assign(player, { bookId: null, files: [], index: 0, url: null, total: 0 });
+  $('#miniPlayer').hidden = true;
+  $('#playerView').hidden = true;
+  document.body.classList.remove('has-player');
+}
+
+function trackName(i) {
+  const f = player.files[i];
+  if (!f) return '';
+  const n = f.name.replace(AUDIO_EXT, '').replace(/_/g, ' ');
+  return player.files.length > 1 ? n : 'Hela boken';
+}
+
+function renderPlayer() {
+  const b = db.books[player.bookId];
+  if (!b) return;
+  const playing = !audioEl.paused;
+  const pct = player.total ? elapsed() / player.total : 0;
+  $('#mpCover').innerHTML = coverHtml(b, 'cover mp-cover');
+  $('#mpTitle').textContent = b.title;
+  $('#mpSub').textContent = `${trackName(player.index)} · ${Math.round(pct * 100)} %`;
+  $('#mpPlay').textContent = playing ? '⏸' : '▶';
+  $('#mpPlay').ariaLabel = playing ? 'Pausa' : 'Spela';
+  $('#mpBar').style.width = `${pct * 100}%`;
+  if ($('#playerView').hidden) return;
+  $('#pvCover').innerHTML = coverHtml(b, 'cover pv-cover');
+  $('#pvTitle').textContent = b.title;
+  $('#pvAuthor').textContent = b.authors || '';
+  $('#pvChapter').textContent = player.files.length > 1 ? `${trackName(player.index)} (${player.index + 1} av ${player.files.length})` : '';
+  const d = audioEl.duration || player.files[player.index]?.duration || 0;
+  $('#pvSeek').value = d ? Math.round((audioEl.currentTime / d) * 1000) : 0;
+  $('#pvCur').textContent = fmtTime(audioEl.currentTime);
+  $('#pvLeft').textContent = `-${fmtTime(d - audioEl.currentTime)}`;
+  $('#pvTotal').textContent = player.total ? `${Math.round(pct * 100)} % · ${fmtLong((player.total - elapsed()) / (audioEl.playbackRate || 1))} kvar` : '';
+  $('#pvPlay').textContent = playing ? '⏸' : '▶';
+  $('#pvPlay').ariaLabel = playing ? 'Pausa' : 'Spela';
+  $('#pvSpeed').textContent = `${String(audioEl.playbackRate || 1).replace('.', ',')}×`;
+  const sl = SLEEP[player.sleepIdx];
+  $('#pvSleep').textContent = sl === 0 ? '😴 Av' : sl === -1 ? '😴 Kapitlets slut' : `😴 ${Math.max(0, Math.ceil((player.sleepAt - Date.now()) / 60000))} min`;
+  const last = player.index === player.files.length - 1;
+  $('#pvFinish').hidden = !(last && d && audioEl.currentTime > d - 120) && pct < 0.98;
+  $('#pvPrev').disabled = player.index === 0;
+  $('#pvNext').disabled = last;
+}
+
+function openPlayerView() {
+  $('#playerView').hidden = false;
+  document.body.classList.add('reading-mode');
+  renderPlayer();
+}
+function closePlayerView() {
+  $('#playerView').hidden = true;
+  $('#pvChapterList').hidden = true;
+  document.body.classList.remove('reading-mode');
+}
+
+function updateMediaSession() {
+  if (!('mediaSession' in navigator) || !player.bookId) return;
+  const b = db.books[player.bookId];
+  const art = /^(https:|data:image)/.test(b?.cover || '') ? [{ src: b.cover, sizes: '512x512' }] : [];
+  try {
+    navigator.mediaSession.metadata = new MediaMetadata({ title: b?.title || '', artist: b?.authors || '', album: trackName(player.index), artwork: art });
+  } catch { /* äldre webbläsare */ }
+}
+function updatePositionState() {
+  if (!('mediaSession' in navigator) || !navigator.mediaSession.setPositionState || !audioEl.duration || !Number.isFinite(audioEl.duration)) return;
+  try { navigator.mediaSession.setPositionState({ duration: audioEl.duration, playbackRate: audioEl.playbackRate, position: Math.min(audioEl.currentTime, audioEl.duration) }); } catch { /* ignorera */ }
+}
+if ('mediaSession' in navigator) {
+  const h = (a, fn) => { try { navigator.mediaSession.setActionHandler(a, fn); } catch { /* stöds inte */ } };
+  h('play', () => audioEl.play());
+  h('pause', () => audioEl.pause());
+  h('seekbackward', (d) => seekBy(-(d?.seekOffset || 30)));
+  h('seekforward', (d) => seekBy(d?.seekOffset || 30));
+  h('previoustrack', () => (audioEl.currentTime > 5 ? (audioEl.currentTime = 0) : gotoTrack(player.index - 1)));
+  h('nexttrack', () => gotoTrack(player.index + 1));
+  h('seekto', (d) => { if (d?.seekTime != null) audioEl.currentTime = d.seekTime; });
+}
+
+audioEl.addEventListener('timeupdate', () => {
+  renderPlayer();
+  savePosition();
+  updatePositionState();
+  const sl = SLEEP[player.sleepIdx];
+  if (sl > 0 && Date.now() >= player.sleepAt) { audioEl.pause(); player.sleepIdx = 0; toast('Insomningstimern pausade 😴'); }
+});
+audioEl.addEventListener('play', () => { renderPlayer(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'; });
+audioEl.addEventListener('pause', () => { savePosition(true); renderPlayer(); if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused'; });
+audioEl.addEventListener('ended', async () => {
+  if (SLEEP[player.sleepIdx] === -1) { player.sleepIdx = 0; savePosition(true); renderPlayer(); toast('Kapitlet är slut – god natt 😴'); return; }
+  if (player.index < player.files.length - 1) { await gotoTrack(player.index + 1); return; }
+  savePosition(true);
+  if ($('#playerView').hidden) openPlayerView();
+  renderPlayer();
+  toast('Slut på ljudboken – tryck ✓ Utläst');
+});
+
+$('#mpPlay').addEventListener('click', () => (audioEl.paused ? playAudioBook(player.bookId) : audioEl.pause()));
+$('#mpBack').addEventListener('click', () => seekBy(-15));
+$('#mpOpen').addEventListener('click', openPlayerView);
+$('#pvClose').addEventListener('click', closePlayerView);
+$('#pvPlay').addEventListener('click', () => (audioEl.paused ? playAudioBook(player.bookId) : audioEl.pause()));
+$('#pvBack').addEventListener('click', () => seekBy(-30));
+$('#pvFwd').addEventListener('click', () => seekBy(30));
+$('#pvPrev').addEventListener('click', () => (audioEl.currentTime > 5 ? (audioEl.currentTime = 0) : gotoTrack(player.index - 1, !audioEl.paused)));
+$('#pvNext').addEventListener('click', () => gotoTrack(player.index + 1, !audioEl.paused));
+$('#pvSeek').addEventListener('input', (e) => { if (audioEl.duration) audioEl.currentTime = (e.target.value / 1000) * audioEl.duration; });
+$('#pvSpeed').addEventListener('click', () => {
+  const i = (SPEEDS.indexOf(audioEl.playbackRate) + 1) % SPEEDS.length;
+  audioEl.playbackRate = SPEEDS[i];
+  saveJSON('mina-bocker:player', { ...playerPrefs(), speed: SPEEDS[i] });
+  renderPlayer();
+});
+$('#pvSleep').addEventListener('click', () => {
+  player.sleepIdx = (player.sleepIdx + 1) % SLEEP.length;
+  const sl = SLEEP[player.sleepIdx];
+  player.sleepAt = sl > 0 ? Date.now() + sl * 60000 : 0;
+  renderPlayer();
+});
+$('#pvChapters').addEventListener('click', () => {
+  const el = $('#pvChapterList');
+  el.hidden = !el.hidden;
+  if (el.hidden) return;
+  el.innerHTML = player.files.map((f, i) => `<button type="button" data-track="${i}" class="${i === player.index ? 'on' : ''}">
+    <span>${esc(trackName(i))}</span><span class="muted">${f.duration ? fmtTime(f.duration) : ''}</span></button>`).join('');
+});
+$('#pvChapterList').addEventListener('click', (e) => {
+  const t = e.target.closest('[data-track]');
+  if (t) { gotoTrack(+t.dataset.track); $('#pvChapterList').hidden = true; }
+});
+$('#pvFinish').addEventListener('click', () => {
+  const id = player.bookId;
+  const e = me && db.entries[entryId(id, me)];
+  stopPlayer();
+  closePlayerView();
+  if (e) put('entries', { ...e, status: 'read', audio: true, page: db.books[id]?.pages || e.page, finished_at: today() });
+  localStorage.removeItem(posKey(id));
+  commit();
+  toast(`Grattis! ”${db.books[id]?.title}” är utlyssnad 🎉`);
+  openEdit(id, me);
+});
+window.addEventListener('pagehide', () => savePosition(true));
+
+// Import från lägg till-dialogen och bokvyn
+$('#audioImportBtn').addEventListener('click', () => $('#audioFile').click());
+$('#audioFile').addEventListener('change', async (e) => {
+  const files = [...e.target.files];
+  e.target.value = '';
+  if (!files.length) return;
+  $('#addDialog').close();
+  const id = await importAudio(files);
+  if (id) openBook(id);
+});
+$('#bvAudioFile').addEventListener('change', async (e) => {
+  const files = [...e.target.files];
+  const id = viewBookId;
+  e.target.value = '';
+  if (files.length && await importAudio(files, id)) openBook(id);
+});
+
 // ---------- Start ----------
 (async function start() {
   if (who !== 'all' && !db.members[who]) who = me || 'all';
@@ -2797,6 +3174,7 @@ document.addEventListener('click', (e) => { if (e.target.closest('[data-find-ser
   if (!me || !db.members[me]) openWho();
   else migrateV1();
   fileKeys().then((keys) => { localEpubs = new Set(keys); render(); }).catch(() => {});
+  loadLocalAudio().then(render).catch(() => {});
   setTimeout(autoCovers, 1500);
   setTimeout(autoMeta, 4000);
 })();

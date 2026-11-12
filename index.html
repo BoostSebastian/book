@@ -68,9 +68,11 @@
       <div id="results" class="results"></div>
       <div class="actions center">
         <button type="button" id="epubImportBtn" class="btn">📖 Importera epub-filer</button>
+        <button type="button" id="audioImportBtn" class="btn">🎧 Importera ljudbok</button>
         <button type="button" id="manualBtn" class="link-btn">Lägg till manuellt</button>
       </div>
       <input type="file" id="epubFile" accept=".epub,application/epub+zip" multiple hidden>
+      <input type="file" id="audioFile" accept="audio/*,.m4b,.m4a,.mp3,.opus,.ogg,.flac" multiple hidden>
     </form>
   </dialog>
 
@@ -171,6 +173,7 @@
       <div id="bvNotes"></div>
       <div class="actions wrap" id="bvActions"></div>
       <input type="file" id="bvEpubFile" accept=".epub,application/epub+zip" hidden>
+      <input type="file" id="bvAudioFile" accept="audio/*,.m4b,.m4a,.mp3,.opus,.ogg,.flac" multiple hidden>
     </div>
   </dialog>
 
@@ -338,6 +341,46 @@
       <div id="statsBody"></div>
     </div>
     <div id="vizTip" class="viz-tip" role="tooltip" hidden></div>
+  </div>
+
+  <!-- Ljudboksspelare -->
+  <audio id="audioEl" preload="metadata"></audio>
+  <div id="miniPlayer" class="mini-player" hidden>
+    <button type="button" id="mpOpen" class="mp-info" aria-label="Öppna spelaren">
+      <span id="mpCover"></span>
+      <span class="mp-text"><b id="mpTitle"></b><span id="mpSub"></span></span>
+    </button>
+    <button type="button" id="mpBack" class="icon-btn mp-btn" aria-label="15 sekunder bakåt">↺</button>
+    <button type="button" id="mpPlay" class="mp-play" aria-label="Spela">▶</button>
+    <span class="mp-bar"><i id="mpBar"></i></span>
+  </div>
+  <div id="playerView" class="player-view" hidden>
+    <div class="pv-top">
+      <button type="button" id="pvClose" class="icon-btn" aria-label="Minimera">⌄</button>
+      <span class="muted small">🎧 Spelas från enheten – fungerar offline</span>
+    </div>
+    <div class="pv-main">
+      <div id="pvCover"></div>
+      <h2 id="pvTitle"></h2>
+      <p id="pvAuthor" class="muted"></p>
+      <p id="pvChapter" class="pv-chapter"></p>
+      <input type="range" id="pvSeek" min="0" max="1000" value="0" aria-label="Position i kapitlet">
+      <div class="pv-times"><span id="pvCur">0:00</span><span id="pvTotal"></span><span id="pvLeft">-0:00</span></div>
+      <div class="pv-controls">
+        <button type="button" id="pvPrev" class="icon-btn" aria-label="Föregående kapitel">⏮</button>
+        <button type="button" id="pvBack" class="pv-skip" aria-label="30 sekunder bakåt">↺<small>30</small></button>
+        <button type="button" id="pvPlay" class="pv-play" aria-label="Spela">▶</button>
+        <button type="button" id="pvFwd" class="pv-skip" aria-label="30 sekunder framåt">↻<small>30</small></button>
+        <button type="button" id="pvNext" class="icon-btn" aria-label="Nästa kapitel">⏭</button>
+      </div>
+      <div class="pv-opts">
+        <button type="button" id="pvSpeed" class="btn">1×</button>
+        <button type="button" id="pvSleep" class="btn">😴 Av</button>
+        <button type="button" id="pvChapters" class="btn">☰ Kapitel</button>
+        <button type="button" id="pvFinish" class="btn primary" hidden>✓ Utläst</button>
+      </div>
+      <div id="pvChapterList" class="pv-list" hidden></div>
+    </div>
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>

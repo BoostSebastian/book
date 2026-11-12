@@ -532,3 +532,48 @@ input.color { width: 48px; height: 34px; padding: 2px; }
 .sg-head input[type=checkbox] { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
 .sg-name { font-weight: 600; padding: 6px 8px; }
 .sg ul { margin: 6px 0 0; padding-left: 34px; font-size: .9rem; color: var(--muted); }
+
+/* ---------- Ljudboksspelare ---------- */
+body.has-player { padding-bottom: calc(170px + env(safe-area-inset-bottom)); }
+body.has-player .fab { bottom: calc(92px + env(safe-area-inset-bottom)); }
+body.has-player .toast { bottom: calc(170px + env(safe-area-inset-bottom)); }
+.mini-player {
+  position: fixed; z-index: 30; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom));
+  max-width: 744px; margin: 0 auto; display: flex; align-items: center; gap: 6px; padding: 8px 10px 10px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 6px 24px rgba(0,0,0,.25); overflow: hidden;
+}
+.mini-player[hidden] { display: none; }
+.mp-info { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; }
+.mp-cover { width: 40px !important; height: 40px !important; border-radius: 6px; object-fit: cover; flex: none; }
+.mp-cover.ph .ph-t { font-size: .4rem; } .mp-cover.ph .ph-a { display: none; }
+.mp-text { min-width: 0; display: grid; }
+.mp-text b, .mp-text span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mp-text span { font-size: .8rem; color: var(--muted); }
+.mp-btn { font-size: 1.3rem; color: var(--text); }
+.mp-play { width: 44px; height: 44px; border-radius: 50%; border: 0; background: var(--accent); color: var(--bg); font-size: 1.1rem; cursor: pointer; flex: none; }
+.mp-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--accent-soft); }
+.mp-bar i { display: block; height: 100%; background: var(--accent); }
+.player-view { position: fixed; inset: 0; z-index: 45; background: var(--bg); overflow-y: auto; padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom); }
+.player-view[hidden] { display: none; }
+.pv-top { display: flex; align-items: center; gap: 8px; padding: 8px 0; }
+.pv-top .icon-btn { font-size: 1.6rem; color: var(--text); }
+.pv-main { max-width: 440px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; padding-bottom: 24px; }
+.pv-cover { width: min(72vw, 300px) !important; height: min(72vw, 300px) !important; border-radius: 12px; object-fit: cover; box-shadow: 0 12px 32px rgba(0,0,0,.35); margin: 8px 0 12px; }
+.pv-cover.ph .ph-t { font-size: 1.3rem; } .pv-cover.ph .ph-a { font-size: 1rem; }
+.pv-main h2 { margin: 0; font-family: Georgia, serif; font-size: 1.4rem; }
+.pv-main p { margin: 0; }
+.pv-chapter { font-weight: 600; color: var(--accent); min-height: 1.2em; }
+#pvSeek { width: 100%; margin-top: 8px; }
+.pv-times { width: 100%; display: flex; justify-content: space-between; font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; gap: 8px; }
+.pv-controls { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 8px 0; }
+.pv-controls .icon-btn { font-size: 1.5rem; color: var(--text); }
+.pv-controls .icon-btn:disabled { opacity: .3; }
+.pv-skip { position: relative; width: 56px; height: 56px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); font-size: 1.6rem; cursor: pointer; color: var(--text); }
+.pv-skip small { position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-45%); font-size: .6rem; font-weight: 700; }
+.pv-play { width: 76px; height: 76px; border-radius: 50%; border: 0; background: var(--accent); color: var(--bg); font-size: 1.9rem; cursor: pointer; box-shadow: 0 6px 16px rgba(0,0,0,.25); }
+.pv-opts { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.pv-list { width: 100%; display: grid; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; text-align: left; }
+.pv-list[hidden] { display: none; }
+.pv-list button { display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 0; border-bottom: 1px solid var(--border); background: var(--surface); cursor: pointer; text-align: left; color: var(--text); }
+.pv-list button.on { background: var(--accent-soft); font-weight: 600; }
+.lp-local { position: absolute; z-index: 2; left: 4px; bottom: 4px; width: 20px; height: 20px; border-radius: 50%; background: rgba(0,0,0,.65); color: #fff; font-size: .6rem; display: grid; place-items: center; }

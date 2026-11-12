@@ -13,7 +13,7 @@
  * skickas till Supabase när man är inloggad och har nät. Appen fungerar alltså offline.
  */
 
-const APP_VERSION = '22';
+const APP_VERSION = '23';
 const DB_KEY = 'mina-bocker:v2';
 const OUTBOX_KEY = 'mina-bocker:outbox';
 const ME_KEY = 'mina-bocker:me';
@@ -1051,6 +1051,7 @@ async function importData(file) {
 // ---------- Inställningar ----------
 function openMenu() {
   updateSyncUI();
+  renderDrivePanel();
   renderSyncPanel($('#syncBtn').title);
   renderFamily();
   const year = String(new Date().getFullYear());
@@ -1534,6 +1535,7 @@ function openBook(id) {
   if (b.owned) tags.push('I bokhyllan');
   if (localEpubs.has(id)) tags.push('E-bok på den här enheten');
   if (localAudio.has(id)) tags.push('🎧 Ljudfiler på enheten');
+  if (driveBooks?.has(id)) tags.push(`☁️ I Google Drive (${fmtBytes(driveBooks.get(id).size)})`);
   $('#bvTags').innerHTML = tags.map((t) => `<span class="tag">${t}</span>`).join('') +
     (b.series ? `<span class="tag">📚 ${esc(seriesLabel(b))}</span>` : '') +
     (b.genres || []).map((g) => `<span class="tag genre">${esc(g)}</span>`).join('');
@@ -1560,6 +1562,11 @@ function openBook(id) {
   acts.push(localAudio.has(id)
     ? '<button type="button" class="link-btn" data-bv="rmaudio">Ta bort ljudfiler</button>'
     : '<button type="button" class="btn" data-bv="addaudio">＋ Ljudfiler</button>');
+  if (driveOn()) {
+    const inDrive = driveBooks?.has(id);
+    if (localAudio.has(id) && !inDrive) acts.push('<button type="button" class="btn" data-bv="driveup">☁️ Spara i Drive</button>');
+    if (!localAudio.has(id) && inDrive) acts.unshift('<button type="button" class="btn primary" data-bv="driveget">⬇ Hämta från Drive</button>');
+  }
   if (!b.owned) acts.push(`<button type="button" class="btn" data-bv="own">📚 ${isAudioOnly(es) ? 'Vi har den som bok' : 'Till hyllan'}</button>`);
   else acts.push('<button type="button" class="link-btn" data-bv="unown">Ta bort ur hyllan</button>');
   acts.push('<button type="button" class="btn" data-bv="match" title="Hämta sidor, genre, år och omslag">🔄 Uppgifter</button>');
@@ -1857,6 +1864,8 @@ $('#bookDialog').addEventListener('click', async (e) => {
   if (a === 'read') openReader(id);
   if (a === 'listen') { $('#bookDialog').close(); playAudioBook(id).then(openPlayerView); }
   if (a === 'addaudio') $('#bvAudioFile').click();
+  if (a === 'driveup') { getDriveToken().catch(() => {}); uploadToDrive(id); }
+  if (a === 'driveget') { getDriveToken().catch(() => {}); downloadFromDrive(id); }
   if (a === 'rmaudio' && confirm('Ta bort ljudfilerna från den här enheten? Boken ligger kvar.')) {
     if (player.bookId === id) stopPlayer();
     await audioDelete(id).catch(() => {});
@@ -2830,7 +2839,7 @@ async function loadLocalAudio() {
   localAudio = new Set((keys || []).map((k) => String(k).split('|')[0]));
 }
 const AUDIO_EXT = /\.(mp3|m4a|m4b|aac|ogg|oga|opus|wav|flac|webm)$/i;
-const fmtBytes = (n) => (n > 1e9 ? `${(n / 1e9).toLocaleString('sv-SE', { maximumFractionDigits: 1 })} GB` : `${Math.round(n / 1e6)} MB`);
+const fmtBytes = (n) => (n > 1e9 ? `${(n / 1e9).toLocaleString('sv-SE', { maximumFractionDigits: 1 })} GB` : n >= 1e6 ? `${Math.round(n / 1e6)} MB` : `${Math.max(1, Math.round(n / 1e3))} kB`);
 function fmtTime(s) {
   s = Math.max(0, Math.floor(s || 0));
   const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
@@ -2905,6 +2914,10 @@ async function importAudio(fileList, bookId = null) {
   setTimeout(autoCovers, 500);
   setTimeout(autoMeta, 1500);
   toast(`Ljudboken är sparad på enheten (${fmtBytes(total)}) – fungerar offline`);
+  if (driveOn() && drivePrefs().autoUpload) {
+    if (tokenValid()) uploadToDrive(book.id);
+    else setTimeout(() => toast('Tryck ☁️ Spara i Drive i bokvyn för att lägga den i Google Drive'), 3000);
+  }
   return book.id;
 }
 
@@ -3160,6 +3173,315 @@ $('#bvAudioFile').addEventListener('change', async (e) => {
   if (files.length && await importAudio(files, id)) openBook(id);
 });
 
+// ---------- Google Drive: ljudböcker i molnet ----------
+// Behörigheten drive.file: appen ser bara filer den själv har skapat. Allt läggs i mappen
+// "Mina böcker – ljudböcker" med en undermapp per bok. Mappar och filer märks med appProperties:
+//   mapp:  { mbKind: 'audiobook', mbBook: <bok-id>, mbTitle, mbAuthors }
+//   fil:   { mbKind: 'track', mbBook, mbIndex, mbDur }
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const DRIVE_API = 'https://www.googleapis.com/drive/v3';
+const DRIVE_UPLOAD = 'https://www.googleapis.com/upload/drive/v3';
+const DRIVE_PREF = 'mina-bocker:drive';
+const driveClientId = () => (window.BOOKS_CONFIG || {}).googleClientId;
+const drivePrefs = () => loadJSON(DRIVE_PREF, { connected: false, autoUpload: true });
+const driveOn = () => !!driveClientId() && drivePrefs().connected;
+let driveClient = null;
+let pendingToken = null;
+let driveToken = null;
+let driveTokenExp = 0;
+let driveBooks = null; // Map bokId → { folder, tracks, size } (cache)
+try { const t = JSON.parse(sessionStorage.getItem('mb-drive-token') || 'null'); if (t?.e > Date.now()) { driveToken = t.t; driveTokenExp = t.e; } } catch { /* ingen */ }
+
+async function ensureDriveClient() {
+  if (driveClient || !driveClientId()) return;
+  await loadScript('https://accounts.google.com/gsi/client');
+  driveClient = google.accounts.oauth2.initTokenClient({
+    client_id: driveClientId(),
+    scope: DRIVE_SCOPE,
+    callback: (r) => {
+      const p = pendingToken;
+      pendingToken = null;
+      if (r.error) { p?.rej(new Error(r.error_description || r.error)); return; }
+      driveToken = r.access_token;
+      driveTokenExp = Date.now() + (+r.expires_in || 3600) * 1000;
+      try { sessionStorage.setItem('mb-drive-token', JSON.stringify({ t: driveToken, e: driveTokenExp })); } catch { /* privat läge */ }
+      saveJSON(DRIVE_PREF, { ...drivePrefs(), connected: true });
+      p?.res(driveToken);
+    },
+    error_callback: (e) => {
+      const p = pendingToken;
+      pendingToken = null;
+      p?.rej(new Error(e?.type === 'popup_closed' ? 'Inloggningen avbröts' : e?.type === 'popup_failed_to_open' ? 'Inloggningsfönstret blockerades – tillåt popup-fönster' : 'Kunde inte logga in på Google'));
+    },
+  });
+}
+const tokenValid = () => driveToken && Date.now() < driveTokenExp - 60000;
+// Måste anropas direkt i ett tryck (innan första await), annars blockerar webbläsaren inloggningsfönstret.
+let tokenPromise = null;
+function getDriveToken() {
+  if (tokenValid()) return Promise.resolve(driveToken);
+  if (tokenPromise) return tokenPromise; // en inloggning i taget, alla väntar på samma
+  if (!driveClient) { ensureDriveClient(); return Promise.reject(new Error('Google laddas – tryck igen om en sekund')); }
+  tokenPromise = new Promise((res, rej) => { pendingToken = { res, rej }; driveClient.requestAccessToken({ prompt: '' }); })
+    .finally(() => { tokenPromise = null; });
+  return tokenPromise;
+}
+
+async function dapi(url, opts = {}) {
+  const t = await getDriveToken();
+  const r = await fetch(url.startsWith('http') ? url : DRIVE_API + url, { ...opts, headers: { Authorization: `Bearer ${t}`, ...(opts.headers || {}) } });
+  if (r.status === 401) { driveToken = null; throw new Error('Inloggningen till Google har gått ut – tryck igen'); }
+  if (!r.ok) throw new Error(`Google Drive ${r.status}: ${(await r.text()).slice(0, 160)}`);
+  return r;
+}
+const q = (s) => encodeURIComponent(s);
+async function driveFind(query, fields = 'id,name,appProperties') {
+  const out = [];
+  let page = '';
+  do {
+    const r = await (await dapi(`/files?q=${q(query + ' and trashed=false')}&fields=nextPageToken,files(${fields})&pageSize=1000&spaces=drive${page ? `&pageToken=${page}` : ''}`)).json();
+    out.push(...(r.files || []));
+    page = r.nextPageToken || '';
+  } while (page);
+  return out;
+}
+const prop = (k, v) => `appProperties has { key='${k}' and value='${String(v).replace(/'/g, "\\'")}' }`;
+const clip = (t, n = 100) => String(t || '').slice(0, n);
+
+async function driveRoot() {
+  const found = await driveFind(prop('mbKind', 'root'));
+  if (found[0]) return found[0];
+  return (await dapi('/files?fields=id,name', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Mina böcker – ljudböcker', mimeType: 'application/vnd.google-apps.folder', appProperties: { mbKind: 'root' } }) })).json();
+}
+
+// Alla ljudböcker i Drive, grupperade per bok
+async function listDriveBooks() {
+  const folders = await driveFind(prop('mbKind', 'audiobook'));
+  const tracks = await driveFind(prop('mbKind', 'track'), 'id,name,size,mimeType,appProperties');
+  const map = new Map();
+  for (const f of folders) map.set(f.appProperties.mbBook, { folder: f, tracks: [], size: 0 });
+  for (const t of tracks) {
+    const g = map.get(t.appProperties?.mbBook);
+    if (!g) continue;
+    g.tracks.push(t);
+    g.size += +t.size || 0;
+  }
+  for (const g of map.values()) g.tracks.sort((a, b) => +a.appProperties.mbIndex - +b.appProperties.mbIndex);
+  driveBooks = map;
+  return map;
+}
+
+// Uppladdning med förlopp (XMLHttpRequest ger förlopp för uppladdning, fetch gör inte det)
+function putWithProgress(url, blob, onProgress) {
+  return new Promise((res, rej) => {
+    const x = new XMLHttpRequest();
+    x.open('PUT', url);
+    x.upload.onprogress = (e) => onProgress?.(e.loaded);
+    x.onload = () => (x.status < 300 ? res(JSON.parse(x.responseText || '{}')) : rej(new Error(`Uppladdning misslyckades (${x.status})`)));
+    x.onerror = () => rej(new Error('Uppladdningen avbröts – kontrollera nätet'));
+    x.send(blob);
+  });
+}
+
+// ---- Överföringar (en i taget) med förloppsrad ----
+let transferChain = Promise.resolve();
+function queueTransfer(label, job) {
+  const run = transferChain.then(async () => {
+    const el = $('#transfer');
+    const show = (text, pct) => { el.hidden = false; $('#transferText').textContent = text; $('#transferBar').style.width = `${Math.round((pct || 0) * 100)}%`; };
+    show(`${label}…`, 0);
+    try { await job(show); } catch (e) { console.warn(e); toast(e.message || 'Något gick fel med Google Drive'); } finally { el.hidden = true; }
+  });
+  transferChain = run.catch(() => {});
+  return run;
+}
+
+function uploadToDrive(bookId) {
+  const b = db.books[bookId];
+  if (!b) return Promise.resolve();
+  return queueTransfer(`☁️ Laddar upp ${b.title}`, async (show) => {
+    const recs = await audioRecords(bookId);
+    if (!recs.length) throw new Error('Inga ljudfiler på enheten att ladda upp');
+    const root = await driveRoot();
+    let folder = (await driveFind(`${prop('mbKind', 'audiobook')} and ${prop('mbBook', bookId)}`))[0];
+    if (!folder) {
+      folder = await (await dapi('/files?fields=id,name,appProperties', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: `${b.title}${b.authors ? ' – ' + b.authors.split(',')[0] : ''}`.replace(/[\/\\]/g, '-'), mimeType: 'application/vnd.google-apps.folder', parents: [root.id],
+          appProperties: { mbKind: 'audiobook', mbBook: bookId, mbTitle: clip(b.title), mbAuthors: clip(b.authors) } }) })).json();
+    }
+    const existing = await driveFind(`${prop('mbKind', 'track')} and ${prop('mbBook', bookId)}`, 'id,size,appProperties');
+    const total = recs.reduce((s, r) => s + r.size, 0);
+    let done = 0;
+    for (const r of recs) {
+      const there = existing.find((t) => +t.appProperties.mbIndex === r.index && +t.size === r.size);
+      if (there) { done += r.size; continue; } // redan uppladdad
+      const init = await dapi(`${DRIVE_UPLOAD}/files?uploadType=resumable&fields=id`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': r.blob.type || 'audio/mpeg', 'X-Upload-Content-Length': String(r.size) },
+        body: JSON.stringify({ name: r.name, parents: [folder.id], appProperties: { mbKind: 'track', mbBook: bookId, mbIndex: String(r.index), mbDur: String(Math.round(r.duration || 0)) } }),
+      });
+      const url = init.headers.get('Location');
+      if (!url) throw new Error('Google Drive svarade inte med en uppladdningsadress');
+      await putWithProgress(url, r.blob, (n) => show(`☁️ Laddar upp ${b.title} – ${fmtBytes(done + n)} av ${fmtBytes(total)}`, (done + n) / total));
+      done += r.size;
+    }
+    await listDriveBooks().catch(() => {});
+    toast(`”${b.title}” finns nu i Google Drive ☁️`);
+    if ($('#bookDialog').open && viewBookId === bookId) openBook(bookId);
+  });
+}
+
+function downloadFromDrive(bookId) {
+  const g = driveBooks?.get(bookId);
+  if (!g) return Promise.resolve();
+  const title = db.books[bookId]?.title || g.folder.appProperties.mbTitle || g.folder.name;
+  return queueTransfer(`⬇ Hämtar ${title}`, async (show) => {
+    try {
+      const est = await navigator.storage?.estimate?.();
+      if (est?.quota && est.quota - est.usage < g.size * 1.05) throw new Error(`Inte tillräckligt med utrymme på enheten (${fmtBytes(g.size)} behövs)`);
+    } catch (e) { if (/utrymme/.test(e.message)) throw e; }
+    try { await navigator.storage?.persist?.(); } catch { /* frivilligt */ }
+    // Boken finns kanske inte i biblioteket (t.ex. uppladdad av någon annan): skapa den
+    if (!db.books[bookId]) {
+      put('books', { id: bookId, title, authors: g.folder.appProperties.mbAuthors || '', year: '', isbn: '', cover: '', pages: null, owned: false, added_at: today() });
+      commit();
+    }
+    if (player.bookId === bookId) stopPlayer();
+    await audioDelete(bookId);
+    let got = 0;
+    for (const t of g.tracks) {
+      const res = await dapi(`/files/${t.id}?alt=media`);
+      const reader = res.body.getReader();
+      let acc = new Blob([]), parts = [], pend = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        parts.push(value);
+        got += value.length;
+        pend += value.length;
+        if (pend > 8e6) { acc = new Blob([acc, ...parts]); parts = []; pend = 0; } // låt webbläsaren lägga stora filer på disk
+        show(`⬇ Hämtar ${title} – ${fmtBytes(got)} av ${fmtBytes(g.size)}`, got / (g.size || 1));
+      }
+      const blob = new Blob([acc, ...parts], { type: t.mimeType || 'audio/mpeg' });
+      const i = +t.appProperties.mbIndex;
+      await idbStore('audio', 'readwrite', (st) => st.put({ key: audioKey(bookId, i), bookId, index: i, name: t.name, size: blob.size, duration: +t.appProperties.mbDur || 0, blob }));
+    }
+    localAudio.add(bookId);
+    if (me) {
+      const e = db.entries[entryId(bookId, me)];
+      if (!e) put('entries', { ...blankEntry(bookId, me), status: 'reading', audio: true, started_at: today() });
+      else if (!e.audio) put('entries', { ...e, audio: true });
+    }
+    commit();
+    setTimeout(autoCovers, 500);
+    toast(`”${title}” är hämtad – fungerar offline 🎧`);
+    if ($('#driveDialog').open) renderDriveList();
+  });
+}
+
+async function deleteFromDrive(bookId) {
+  const g = driveBooks?.get(bookId);
+  if (!g) return;
+  await dapi(`/files/${g.folder.id}`, { method: 'DELETE' }); // tar även bort filerna i mappen
+  driveBooks.delete(bookId);
+  renderDriveList();
+}
+
+// ---- Gränssnitt ----
+function renderDrivePanel() {
+  const el = $('#drivePanel');
+  if (!driveClientId()) {
+    el.innerHTML = '<p class="muted">Inte påslaget. Följ guiden i README ("Google Drive för ljudböcker") och fyll i <code>googleClientId</code> i config.js.</p>';
+    return;
+  }
+  ensureDriveClient().catch(() => {});
+  if (!drivePrefs().connected) {
+    el.innerHTML = `<p class="muted">Spara ljudböckerna i din Google Drive (15 GB gratis) och hämta dem till vilken enhet som helst.</p>
+      <div class="actions"><button type="button" id="driveConnect" class="btn primary">Anslut Google Drive</button></div>`;
+    return;
+  }
+  el.innerHTML = `<p class="muted">Ansluten ✓ – ljudböckerna ligger i mappen ”Mina böcker – ljudböcker”.</p>
+    <label class="check"><input type="checkbox" id="driveAuto" ${drivePrefs().autoUpload ? 'checked' : ''}> <span>Spara nya ljudböcker i Drive automatiskt</span></label>
+    <div class="actions wrap">
+      <button type="button" id="driveOpen" class="btn">☁️ Ljudböcker i Drive</button>
+      <button type="button" id="driveDisconnect" class="link-btn">Koppla från</button>
+    </div>`;
+}
+
+async function openDriveList() {
+  $('#driveList').innerHTML = '<p class="muted">Hämtar listan från Google Drive…</p>';
+  if (!$('#driveDialog').open) $('#driveDialog').showModal();
+  try {
+    await listDriveBooks();
+    renderDriveList();
+  } catch (e) {
+    $('#driveList').innerHTML = `<p class="muted">${esc(e.message)}</p><div class="actions"><button type="button" class="btn" data-drive-retry>Försök igen</button></div>`;
+  }
+}
+function renderDriveList() {
+  if (!driveBooks) return;
+  const items = [...driveBooks.entries()].sort((a, b) => (db.books[a[0]]?.title || a[1].folder.name).localeCompare(db.books[b[0]]?.title || b[1].folder.name, 'sv'));
+  const localOnly = [...localAudio].filter((id) => !driveBooks.has(id) && db.books[id]);
+  const used = items.reduce((s, [, g]) => s + g.size, 0);
+  $('#driveList').innerHTML = (localOnly.length
+    ? `<div class="drive-note">${localOnly.length} ljudbok${localOnly.length > 1 ? 'öcker' : ''} på enheten finns inte i Drive.
+        <button type="button" class="btn small-btn" data-drive-upload-all>☁️ Ladda upp</button></div>` : '')
+    + (items.length ? items.map(([id, g]) => {
+      const b = db.books[id] || { title: g.folder.appProperties.mbTitle || g.folder.name, authors: g.folder.appProperties.mbAuthors || '' };
+      const here = localAudio.has(id);
+      return `<div class="drive-item">
+        ${coverHtml(b, 'cover')}
+        <div class="info"><span class="title">${esc(b.title)}</span>
+          <span class="author">${esc(b.authors || '')}</span>
+          <span class="muted small">${g.tracks.length} fil${g.tracks.length === 1 ? '' : 'er'} · ${fmtBytes(g.size)}</span></div>
+        <div class="drive-acts">
+          ${here ? '<button type="button" class="btn small-btn" data-drive-play="' + esc(id) + '">▶ Lyssna</button>'
+            : `<button type="button" class="btn primary small-btn" data-drive-get="${esc(id)}">⬇ Hämta</button>`}
+          <button type="button" class="link-btn" data-drive-del="${esc(id)}">Ta bort</button>
+        </div></div>`;
+    }).join('') : '<p class="muted">Inga ljudböcker i Drive än. Importera en ljudbok, eller tryck ☁️ Spara i Drive på en bok.</p>')
+    + `<p class="muted small center">Används i Drive: ${fmtBytes(used)}</p>`;
+}
+
+document.addEventListener('click', (e) => {
+  const t = e.target;
+  if (t.id === 'driveConnect') {
+    getDriveToken().then(() => { toast('Google Drive är anslutet ✓'); renderDrivePanel(); }).catch((err) => toast(err.message));
+  }
+  if (t.id === 'driveDisconnect') {
+    try { if (driveToken && window.google?.accounts?.oauth2) google.accounts.oauth2.revoke(driveToken, () => {}); } catch { /* ignorera */ }
+    driveToken = null;
+    sessionStorage.removeItem('mb-drive-token');
+    saveJSON(DRIVE_PREF, { ...drivePrefs(), connected: false });
+    driveBooks = null;
+    renderDrivePanel();
+  }
+  if (t.id === 'driveAuto') saveJSON(DRIVE_PREF, { ...drivePrefs(), autoUpload: t.checked });
+  if (t.id === 'driveOpen' || t.closest?.('[data-drive-retry]')) {
+    getDriveToken().catch(() => {}); // starta inloggning direkt i trycket om det behövs
+    $('#menuDialog').close();
+    openDriveList();
+  }
+  const get = t.closest?.('[data-drive-get]');
+  if (get) { getDriveToken().catch(() => {}); downloadFromDrive(get.dataset.driveGet); }
+  const play = t.closest?.('[data-drive-play]');
+  if (play) { $('#driveDialog').close(); playAudioBook(play.dataset.drivePlay).then(openPlayerView); }
+  const del = t.closest?.('[data-drive-del]');
+  if (del) {
+    const id = del.dataset.driveDel;
+    const name = db.books[id]?.title || driveBooks?.get(id)?.folder.name;
+    if (confirm(`Ta bort ”${name}” från Google Drive? Filerna på den här enheten ligger kvar.`)) deleteFromDrive(id).catch((err) => toast(err.message));
+  }
+  if (t.closest?.('[data-drive-upload-all]')) {
+    getDriveToken().catch(() => {});
+    [...localAudio].filter((id) => !driveBooks?.has(id) && db.books[id]).forEach((id) => uploadToDrive(id).then(() => renderDriveList()));
+  }
+});
+
+// Starta inloggningsklienten i förväg om Drive är anslutet (inloggningsfönster måste öppnas direkt vid ett tryck)
+if (driveOn()) ensureDriveClient().catch(() => {});
+
 // ---------- Start ----------
 (async function start() {
   if (who !== 'all' && !db.members[who]) who = me || 'all';
@@ -3175,6 +3497,7 @@ $('#bvAudioFile').addEventListener('change', async (e) => {
   else migrateV1();
   fileKeys().then((keys) => { localEpubs = new Set(keys); render(); }).catch(() => {});
   loadLocalAudio().then(render).catch(() => {});
+  if (driveOn() && tokenValid()) listDriveBooks().then(render).catch(() => {});
   setTimeout(autoCovers, 1500);
   setTimeout(autoMeta, 4000);
 })();

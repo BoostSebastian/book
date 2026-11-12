@@ -577,3 +577,21 @@ body.has-player .toast { bottom: calc(170px + env(safe-area-inset-bottom)); }
 .pv-list button { display: flex; justify-content: space-between; gap: 10px; padding: 10px 12px; border: 0; border-bottom: 1px solid var(--border); background: var(--surface); cursor: pointer; text-align: left; color: var(--text); }
 .pv-list button.on { background: var(--accent-soft); font-weight: 600; }
 .lp-local { position: absolute; z-index: 2; left: 4px; bottom: 4px; width: 20px; height: 20px; border-radius: 50%; background: rgba(0,0,0,.65); color: #fff; font-size: .6rem; display: grid; place-items: center; }
+
+/* ---------- Google Drive ---------- */
+.transfer {
+  position: fixed; z-index: 70; left: 50%; top: calc(8px + env(safe-area-inset-top)); transform: translateX(-50%);
+  width: min(92vw, 420px); background: var(--text); color: var(--bg); border-radius: 12px; padding: 8px 12px 10px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.3); font-size: .85rem; display: grid; gap: 6px;
+}
+.transfer[hidden] { display: none; }
+.tbar { height: 4px; border-radius: 2px; background: rgba(255,255,255,.25); overflow: hidden; }
+.tbar i { display: block; height: 100%; background: var(--accent-soft); transition: width .3s; }
+.drive-list { display: grid; gap: 8px; }
+.drive-item { display: flex; gap: 10px; align-items: center; padding: 8px; border: 1px solid var(--border); border-radius: 12px; }
+.drive-item .cover { width: 44px; height: 66px; font-size: 1rem; flex: none; }
+.drive-item .cover.ph .ph-t { font-size: .45rem; } .drive-item .cover.ph .ph-a { display: none; }
+.drive-item .info { flex: 1; min-width: 0; display: grid; }
+.drive-item .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.drive-acts { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.drive-note { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 8px 10px; border-radius: 10px; background: var(--accent-soft); font-size: .9rem; }

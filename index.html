@@ -220,6 +220,18 @@
     </div>
   </dialog>
 
+  <!-- Ljudböcker i Google Drive -->
+  <dialog id="driveDialog">
+    <div class="sheet">
+      <div class="sheet-head">
+        <h2>☁️ Ljudböcker i Drive</h2>
+        <button type="button" class="icon-btn" aria-label="Stäng" data-close>✕</button>
+      </div>
+      <p class="muted">Tryck ⬇ Hämta för att lägga en ljudbok på den här enheten, så fungerar den offline.</p>
+      <div id="driveList" class="drive-list"></div>
+    </div>
+  </dialog>
+
   <!-- Hur långt har man kommit -->
   <dialog id="progressDialog">
     <form method="dialog" class="sheet" id="progressForm">
@@ -290,6 +302,9 @@
 
       <h3>Familjen</h3>
       <div id="familyList" class="family-list"></div>
+
+      <h3>Google Drive (ljudböcker)</h3>
+      <div id="drivePanel"></div>
 
       <h3>Bokuppgifter</h3>
       <p class="muted">Hämta sidantal, genre, år och omslag för alla böcker som saknar något.</p>
@@ -381,6 +396,10 @@
       </div>
       <div id="pvChapterList" class="pv-list" hidden></div>
     </div>
+  </div>
+
+  <div id="transfer" class="transfer" role="status" aria-live="polite" hidden>
+    <span id="transferText"></span><span class="tbar"><i id="transferBar"></i></span>
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>

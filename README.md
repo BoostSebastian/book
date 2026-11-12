@@ -18,7 +18,7 @@ Dessutom:
 - **Omslag** – hämtas automatiskt (Google Books / Open Library). Under *Redigera → Byt omslag* kan du välja bland flera omslag eller ta en bild på din egen bok.
 - **Lyssna på egna ljudböcker** – importera DRM-fria ljudfiler (mp3, m4b, m4a …) via *＋ → 🎧 Importera ljudbok* eller *＋ Ljudfiler* på en bok.
   Filerna sparas på enheten och fungerar offline. Spelaren har minispelare, låsskärmskontroller, hastighet, insomningstimer och kapitel,
-  och kommer ihåg var du var. Filerna synkas inte mellan enheter.
+  och kommer ihåg var du var. Med **Google Drive** (se nedan) kan du ladda upp ljudböckerna och hämta dem till andra enheter.
 - **Läs epub** – importera dina epub-filer (＋ → *Importera epub-filer*, eller *＋ Epub* på en bok) och läs direkt i appen.
   Appen kommer ihåg var du är och uppdaterar hur långt du kommit, så resten av familjen ser det.
   Epub-filerna sparas på den enhet där du importerar dem (de synkas inte).
@@ -72,6 +72,21 @@ Då hämtas uppgifter bara från LIBRIS och Open Library. En egen nyckel är gra
 5. Klistra in nyckeln som `googleBooksKey` i `config.js`.
 
 Nyckeln syns i appens källkod, men med begränsningarna ovan fungerar den bara från er sida och bara för Books API.
+
+## Google Drive för ljudböcker (valfritt)
+
+Med Google Drive kan ljudböckerna laddas upp från valfri enhet och hämtas till telefonen för att lyssna offline
+(15 GB gratis). Appen får bara se filer den själv skapar, i mappen "Mina böcker – ljudböcker".
+
+1. Gå till <https://console.cloud.google.com/> och välj projektet (samma som för Books-nyckeln går bra, annars skapa ett).
+2. **APIs & Services → Library** → sök **Google Drive API** → **Enable**.
+3. **Google Auth Platform** (eller *OAuth consent screen*):
+   - **Branding:** appnamn "Mina böcker" och din e-post.
+   - **Audience:** *External*, låt den stå i *Testing* och lägg till era Google-konton under **Test users** (t.ex. din och Matildas).
+   - **Data access:** *Add or remove scopes* → välj `.../auth/drive.file`.
+4. **Clients → Create client → Web application**. Under **Authorized JavaScript origins**: `https://boostsebastian.github.io`. Skapa.
+5. Kopiera **Client ID** (slutar på `.apps.googleusercontent.com`) till `googleClientId` i `config.js`. Det är inte hemligt.
+6. I appen: **⋯ → Anslut Google Drive**. Google visar "Google har inte verifierat appen" – välj **Fortsätt** (det är din egen app).
 
 ## Publicera gratis med GitHub Pages
 

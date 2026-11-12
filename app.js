@@ -13,7 +13,7 @@
  * skickas till Supabase när man är inloggad och har nät. Appen fungerar alltså offline.
  */
 
-const APP_VERSION = '23';
+const APP_VERSION = '24';
 const DB_KEY = 'mina-bocker:v2';
 const OUTBOX_KEY = 'mina-bocker:outbox';
 const ME_KEY = 'mina-bocker:me';
@@ -3391,6 +3391,7 @@ async function deleteFromDrive(bookId) {
 // ---- Gränssnitt ----
 function renderDrivePanel() {
   const el = $('#drivePanel');
+  $('#driveSection').hidden = !driveClientId(); // visas bara när googleClientId är ifyllt i config.js
   if (!driveClientId()) {
     el.innerHTML = '<p class="muted">Inte påslaget. Följ guiden i README ("Google Drive för ljudböcker") och fyll i <code>googleClientId</code> i config.js.</p>';
     return;
